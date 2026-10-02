@@ -198,10 +198,16 @@ def upgrade() -> None:
     op.execute("""
     CREATE TABLE weather_reports_2026_09 PARTITION OF weather_reports
         FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');
+    """)
+    op.execute("""
     CREATE TABLE weather_reports_2026_10 PARTITION OF weather_reports
         FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+    """)
+    op.execute("""
     CREATE TABLE weather_reports_2026_11 PARTITION OF weather_reports
         FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+    """)
+    op.execute("""
     CREATE TABLE weather_reports_default PARTITION OF weather_reports DEFAULT;
     """)
 
@@ -347,8 +353,12 @@ def upgrade() -> None:
     op.execute("""
     CREATE TABLE audit_logs_2026_q3 PARTITION OF audit_logs
         FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');
+    """)
+    op.execute("""
     CREATE TABLE audit_logs_2026_q4 PARTITION OF audit_logs
         FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+    """)
+    op.execute("""
     CREATE TABLE audit_logs_default PARTITION OF audit_logs DEFAULT;
     """)
 
