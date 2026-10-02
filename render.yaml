@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: skypulse-backend
+    runtime: python
+    region: oregon
+    plan: free
+    branch: main
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DEMO_MODE
+        value: "true"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///skypulse.db
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000,http://localhost:5173"
+      - key: OPEN_METEO_ENABLED
+        value: "true"
+      - key: OPEN_METEO_BASE_URL
+        value: https://api.open-meteo.com/v1/forecast
+      - key: AI_PROVIDER
+        value: groq
+      - key: GROQ_ENABLED
+        value: "true"
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
