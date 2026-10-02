@@ -25,6 +25,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting SkyPulse application...")
     logger.info("Environment: %s | Demo Mode: %s", settings.APP_ENV, settings.DEMO_MODE)
 
+    # Initialize SQLite schema if running on fallback database
+    if settings.DATABASE_URL.startswith("sqlite"):
+        try:
+            from app.db.base import Base
+            from app.db.session import engine
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database schema initialized (SQLite fallback)")
+        except Exception as exc:
+            logger.warning("Database schema auto-creation notice: %s", exc)
+
     # Start Phase 6 real-time gateway (non-blocking; fails gracefully if Kafka/Redis offline)
     try:
         from workers.realtime_gateway import realtime_gateway
@@ -47,8 +58,8 @@ app = FastAPI(
     title=settings.APP_NAME,
     description="SkyPulse — National Weather Big Data Analytics Platform",
     version="1.0.0",
-    docs_url="/docs" if settings.DEBUG else None,
-    redoc_url="/redoc" if settings.DEBUG else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan
 )
 

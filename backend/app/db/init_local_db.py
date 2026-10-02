@@ -5,10 +5,13 @@ Creates schema tables in SQLite/PostgreSQL and seeds canonical weather events
 with multi-source evidence reports, sources, and locations for interactive judging.
 """
 
-import asyncio
+import os
 import sys
 import uuid
-sys.path.insert(0, r"e:\SkyPulse\backend")
+backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 from datetime import datetime, timezone, timedelta
 from typing import List
 
