@@ -29,6 +29,27 @@ def _json_serializer(obj: Any) -> bytes:
     return json.dumps(obj, default=str).encode("utf-8")
 
 
+def _build_kafka_kwargs() -> dict:
+    kwargs = {}
+    sec_proto = (settings.KAFKA_SECURITY_PROTOCOL or "PLAINTEXT").upper()
+    if sec_proto in ("SASL_SSL", "SSL", "SASL_PLAINTEXT"):
+        kwargs["security_protocol"] = sec_proto
+        if "SSL" in sec_proto:
+            import ssl
+            ssl_ctx = ssl.create_default_context()
+            if settings.KAFKA_SSL_CA_CERT:
+                try:
+                    ssl_ctx.load_verify_locations(cadata=settings.KAFKA_SSL_CA_CERT.strip())
+                except Exception as e:
+                    logger.warning("Could not load custom KAFKA_SSL_CA_CERT (%s), using default system CAs.", e)
+            kwargs["ssl_context"] = ssl_ctx
+        if "SASL" in sec_proto:
+            kwargs["sasl_mechanism"] = settings.KAFKA_SASL_MECHANISM or "SCRAM-SHA-256"
+            kwargs["sasl_plain_username"] = settings.KAFKA_SASL_USERNAME
+            kwargs["sasl_plain_password"] = settings.KAFKA_SASL_PASSWORD
+    return kwargs
+
+
 class KafkaBusProducer:
     """
     Kafka / Redpanda message producer with automatic retries and in-memory fallback
@@ -52,18 +73,20 @@ class KafkaBusProducer:
     async def start(self) -> None:
         try:
             from aiokafka import AIOKafkaProducer
+            extra_kwargs = _build_kafka_kwargs()
             self._producer = AIOKafkaProducer(
                 bootstrap_servers=self.bootstrap_servers,
                 value_serializer=_json_serializer,
                 key_serializer=lambda k: k.encode("utf-8") if k else None,
-                request_timeout_ms=3000,
+                request_timeout_ms=10000,
                 retry_backoff_ms=200,
+                **extra_kwargs,
             )
-            await asyncio.wait_for(self._producer.start(), timeout=3.0)
+            await asyncio.wait_for(self._producer.start(), timeout=15.0)
             self._is_connected = True
             logger.info("KafkaBusProducer connected to %s", self.bootstrap_servers)
         except Exception as e:
-            logger.info("Kafka/Redpanda broker unavailable (%s). Using in-memory bus.", e)
+            logger.warning("Kafka/Redpanda broker unavailable (%s: %s). Using in-memory bus.", type(e).__name__, e)
             self._producer = None
             self._is_connected = False
 
@@ -146,6 +169,7 @@ class KafkaBusConsumer:
         self._is_running = True
         try:
             from aiokafka import AIOKafkaConsumer
+            extra_kwargs = _build_kafka_kwargs()
             self._consumer = AIOKafkaConsumer(
                 self.topic,
                 bootstrap_servers=self.bootstrap_servers,
@@ -153,9 +177,10 @@ class KafkaBusConsumer:
                 value_deserializer=lambda v: json.loads(v.decode("utf-8")),
                 auto_offset_reset="earliest",
                 enable_auto_commit=True,
-                request_timeout_ms=3000,
+                request_timeout_ms=10000,
+                **extra_kwargs,
             )
-            await asyncio.wait_for(self._consumer.start(), timeout=3.0)
+            await asyncio.wait_for(self._consumer.start(), timeout=15.0)
             self._is_connected = True
             logger.info("KafkaBusConsumer joined group '%s' for topic '%s'", self.group_id, self.topic)
         except Exception as e:

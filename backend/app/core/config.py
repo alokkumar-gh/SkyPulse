@@ -42,6 +42,11 @@ class Settings(BaseSettings):
 
     # Kafka / Redpanda
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+    KAFKA_SECURITY_PROTOCOL: str = "PLAINTEXT"
+    KAFKA_SASL_MECHANISM: str = "SCRAM-SHA-256"
+    KAFKA_SASL_USERNAME: Optional[str] = None
+    KAFKA_SASL_PASSWORD: Optional[str] = None
+    KAFKA_SSL_CA_CERT: Optional[str] = None
 
     # OpenSearch
     OPENSEARCH_URL: str = "http://localhost:9200"
