@@ -218,13 +218,70 @@ class EventDNAService:
         spatial_radius = round(max(max_dist_km, 5.0), 2)
         spatial_footprint = round(math.pi * (spatial_radius ** 2), 2)
 
-        # 10. Compact Snapshot
+        # 10. Compact Snapshot & Observation Corroboration
+        from app.services.weather_intelligence_service import (
+            synthesize_semantic_event_intelligence,
+            evaluate_physical_observation_corroboration,
+        )
+        from app.models.weather_observation import WeatherObservation
+        from ai.confidence_engine import get_confidence_tier_label
+
+        # Lookup matched physical observation
+        matched_obs = None
+        if event.primary_state:
+            obs_stmt = select(WeatherObservation).where(WeatherObservation.state.ilike(f"%{event.primary_state}%"))
+            if event.primary_district:
+                obs_stmt = obs_stmt.where(WeatherObservation.district.ilike(f"%{event.primary_district}%"))
+            obs_stmt = obs_stmt.order_by(WeatherObservation.observed_at.desc()).limit(1)
+            obs_res = await db.execute(obs_stmt)
+            matched_obs = obs_res.scalar_one_or_none()
+            if not matched_obs:
+                obs_stmt2 = select(WeatherObservation).where(WeatherObservation.state.ilike(f"%{event.primary_state}%")).order_by(WeatherObservation.observed_at.desc()).limit(1)
+                obs_res2 = await db.execute(obs_stmt2)
+                matched_obs = obs_res2.scalar_one_or_none()
+
+        obs_eval = evaluate_physical_observation_corroboration(event.category, event.sub_category, matched_obs)
+        conf_tier = get_confidence_tier_label(event.confidence_score)
+
+        # Source Claim Label
+        indep_count = fingerprint.unique_sources_count
+        corrob_count = fingerprint.supporting_evidence_count if indep_count > 1 else 0
+        if indep_count >= 2 and fingerprint.cross_source_corroborated:
+            claim_label = "MULTI-SOURCE INTELLIGENCE"
+        elif indep_count >= 2:
+            claim_label = "LIMITED CORROBORATION"
+        else:
+            claim_label = "SINGLE-SOURCE SIGNAL"
+
+        raw_report_texts = [r.raw_content or r.normalized_text or "" for r in reports]
+        semantic_intel = synthesize_semantic_event_intelligence(
+            category=event.category,
+            sub_category=event.sub_category,
+            state=event.primary_state,
+            district=event.primary_district,
+            city=event.primary_city,
+            evidence_texts=raw_report_texts,
+            publishers=[r.source.name for r in reports if r.source and r.source.name],
+            evidence_count=max(len(reports), event.evidence_count),
+        )
+
         snapshot = EventDNASnapshot(
             event_id=str(event.id),
             event_type=event.category,
+            phenomenon=semantic_intel["phenomenon"],
+            event_nature=semantic_intel["event_nature"],
+            temporal_scope=semantic_intel["temporal_scope"],
+            is_current_observation=obs_eval["is_current_observation"],
+            is_current_observation_supported=obs_eval["is_current_observation_supported"],
+            evidence_basis=semantic_intel["evidence_basis"],
             status=event.verification_status,
             severity=event.severity,
             source_count=fingerprint.unique_sources_count,
+            independent_source_count=indep_count,
+            corroborating_source_count=corrob_count,
+            source_claim_label=claim_label,
+            confidence_tier_label=conf_tier,
+            observation_status_label=obs_eval["observation_status_label"],
             evidence_count=fingerprint.total_evidence_count,
             conflict_count=fingerprint.contradicting_evidence_count,
             duplicate_count=fingerprint.duplicate_count,
@@ -239,7 +296,17 @@ class EventDNAService:
         response = EventDNAResponse(
             event_id=str(event.id),
             event_type=event.category,
-            sub_category=event.sub_category,
+            sub_category=semantic_intel["sub_category"],
+            phenomenon=semantic_intel["phenomenon"],
+            event_nature=semantic_intel["event_nature"],
+            temporal_scope=semantic_intel["temporal_scope"],
+            is_current_observation=obs_eval["is_current_observation"],
+            is_current_observation_supported=obs_eval["is_current_observation_supported"],
+            observation_summary=obs_eval["observation_summary"],
+            observation_status_label=obs_eval["observation_status_label"],
+            source_claim_label=claim_label,
+            confidence_tier_label=conf_tier,
+            evidence_basis=semantic_intel["evidence_basis"],
             status=event.verification_status,
             lifecycle_phase=lifecycle_phase,
             severity=event.severity,

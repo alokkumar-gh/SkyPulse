@@ -118,6 +118,29 @@ export const ReputationStateBadge: React.FC<{
   );
 };
 
+function formatPercent(val: unknown, fallback = 'N/A'): string {
+  if (typeof val === 'number' && !Number.isNaN(val)) {
+    return `${Math.round(val * 100)}%`;
+  }
+  return fallback;
+}
+
+function formatObservations(obs: unknown, dup?: unknown): React.ReactNode {
+  if (typeof obs !== 'number' || Number.isNaN(obs)) {
+    return 'N/A';
+  }
+  return (
+    <>
+      {obs.toLocaleString()}
+      {typeof dup === 'number' && !Number.isNaN(dup) && dup > 0 ? (
+        <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400, marginLeft: '4px' }}>
+          ({dup.toLocaleString()} dup)
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 export const CategoryReliabilityPill: React.FC<{
   detail: CategoryReputationDetail;
 }> = ({ detail }) => {
@@ -137,6 +160,12 @@ export const CategoryReliabilityPill: React.FC<{
   };
 
   const style = getLevelStyle(detail.reliability_level);
+  const obsCount = typeof detail.observation_count === 'number' && !Number.isNaN(detail.observation_count)
+    ? `${detail.observation_count.toLocaleString()} obs`
+    : '0 obs';
+  const supportText = typeof detail.support_rate === 'number' && !Number.isNaN(detail.support_rate)
+    ? `${Math.round(detail.support_rate * 100)}% Verified`
+    : 'Insufficient data';
 
   return (
     <div
@@ -156,11 +185,11 @@ export const CategoryReliabilityPill: React.FC<{
           {detail.category}
         </span>
         <span style={{ fontWeight: 600, color: style.color, fontSize: '9px', fontFamily: 'var(--font-mono)' }}>
-          {detail.observation_count} obs
+          {obsCount}
         </span>
       </div>
       <span style={{ fontSize: '9px', color: style.color, fontWeight: 600, textTransform: 'uppercase' }}>
-        {detail.support_rate !== null ? `${Math.round(detail.support_rate * 100)}% Verified` : 'No Data'}
+        {supportText}
       </span>
     </div>
   );
@@ -396,7 +425,7 @@ export const SourceReputationPanel: React.FC<{
                     <td style={{ padding: '6px 8px', fontWeight: 600 }}>Operational Trust</td>
                     {comparedSources.map((s) => (
                       <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
-                        {(s.current_trust * 100).toFixed(0)}%
+                        {formatPercent(s.current_trust, 'N/A')}
                       </td>
                     ))}
                   </tr>
@@ -404,7 +433,7 @@ export const SourceReputationPanel: React.FC<{
                     <td style={{ padding: '6px 8px', fontWeight: 600 }}>Total Observations</td>
                     {comparedSources.map((s) => (
                       <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
-                        {s.observation_count}
+                        {formatObservations(s.observation_count, s.duplicate_count)}
                       </td>
                     ))}
                   </tr>
@@ -412,15 +441,15 @@ export const SourceReputationPanel: React.FC<{
                     <td style={{ padding: '6px 8px', fontWeight: 600 }}>Verification Support</td>
                     {comparedSources.map((s) => (
                       <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)', color: '#10b981' }}>
-                        {s.verification_support_rate !== null ? `${Math.round(s.verification_support_rate * 100)}%` : '—'}
+                        {formatPercent(s.verification_support_rate, 'Insufficient evidence')}
                       </td>
                     ))}
                   </tr>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                     <td style={{ padding: '6px 8px', fontWeight: 600 }}>Contradictions</td>
                     {comparedSources.map((s) => (
-                      <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)', color: '#ef4444' }}>
-                        {s.contradiction_rate !== null ? `${Math.round(s.contradiction_rate * 100)}% (${s.contradicted_count})` : '0%'}
+                      <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)', color: (s.contradicted_count && s.contradicted_count > 0) ? '#ef4444' : 'var(--text-primary)' }}>
+                        {formatPercent(s.contradiction_rate, '0%')}{typeof s.contradicted_count === 'number' && s.contradicted_count > 0 ? ` (${s.contradicted_count})` : ''}
                       </td>
                     ))}
                   </tr>
@@ -428,7 +457,7 @@ export const SourceReputationPanel: React.FC<{
                     <td style={{ padding: '6px 8px', fontWeight: 600 }}>Corroboration Rate</td>
                     {comparedSources.map((s) => (
                       <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)', color: '#38bdf8' }}>
-                        {s.corroboration_rate !== null ? `${Math.round(s.corroboration_rate * 100)}%` : '—'}
+                        {formatPercent(s.corroboration_rate, 'N/A')}
                       </td>
                     ))}
                   </tr>
@@ -436,7 +465,7 @@ export const SourceReputationPanel: React.FC<{
                     <td style={{ padding: '6px 8px', fontWeight: 600 }}>Duplicate Rate</td>
                     {comparedSources.map((s) => (
                       <td key={s.source_id} style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
-                        {s.duplicate_rate !== null ? `${Math.round(s.duplicate_rate * 100)}% (${s.duplicate_count})` : '0%'}
+                        {formatPercent(s.duplicate_rate, '0%')}{typeof s.duplicate_count === 'number' && s.duplicate_count > 0 ? ` (${s.duplicate_count})` : ''}
                       </td>
                     ))}
                   </tr>
@@ -554,7 +583,7 @@ export const SourceReputationPanel: React.FC<{
               <div style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Operational Trust</span>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
-                  {(source.current_trust * 100).toFixed(0)}%
+                  {formatPercent(source.current_trust, 'N/A')}
                 </div>
               </div>
 
@@ -562,7 +591,7 @@ export const SourceReputationPanel: React.FC<{
               <div style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Observations</span>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
-                  {source.observation_count} <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400 }}>({source.duplicate_count} dup)</span>
+                  {formatObservations(source.observation_count, source.duplicate_count)}
                 </div>
               </div>
 
@@ -570,15 +599,15 @@ export const SourceReputationPanel: React.FC<{
               <div style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Verification Support</span>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: '#10b981', fontFamily: 'var(--font-mono)' }}>
-                  {source.verification_support_rate !== null ? `${Math.round(source.verification_support_rate * 100)}%` : '—'}
+                  {formatPercent(source.verification_support_rate, 'Insufficient evidence')}
                 </div>
               </div>
 
               {/* Contradiction Rate */}
               <div style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Contradiction Rate</span>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: source.contradicted_count > 0 ? '#ef4444' : 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
-                  {source.contradiction_rate !== null ? `${Math.round(source.contradiction_rate * 100)}%` : '0%'}
+                <div style={{ fontSize: '13px', fontWeight: 700, color: (source.contradicted_count && source.contradicted_count > 0) ? '#ef4444' : 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
+                  {formatPercent(source.contradiction_rate, '0%')}
                 </div>
               </div>
 
@@ -586,7 +615,7 @@ export const SourceReputationPanel: React.FC<{
               <div style={{ padding: '6px 8px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Corroboration</span>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>
-                  {source.corroboration_rate !== null ? `${Math.round(source.corroboration_rate * 100)}%` : '—'}
+                  {formatPercent(source.corroboration_rate, 'N/A')}
                 </div>
               </div>
             </div>
@@ -610,12 +639,16 @@ export const SourceReputationPanel: React.FC<{
                     WHY THIS REPUTATION?
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    {source.explanation.map((reason, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        <span style={{ color: 'var(--brand-blue)', lineHeight: '1.2' }}>•</span>
-                        <span>{reason}</span>
-                      </div>
-                    ))}
+                    {Array.isArray(source.explanation) && source.explanation.length > 0 ? (
+                      source.explanation.map((reason, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                          <span style={{ color: 'var(--brand-blue)', lineHeight: '1.2' }}>•</span>
+                          <span>{reason}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Evidence-backed reliability score derived from verified meteorological telemetry.</span>
+                    )}
                   </div>
                 </div>
 

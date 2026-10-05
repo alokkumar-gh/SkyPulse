@@ -128,7 +128,6 @@ export const EmergingEventsPanel: React.FC<EmergingEventsPanelProps> = ({
       setLoading(true);
       setError(null);
       const res = await emergingEventsAPI.list({
-        lookback_minutes: 120,
         category: activeCategoryFilter === 'ALL' ? undefined : activeCategoryFilter,
       });
       if (res && res.items) {
@@ -217,7 +216,7 @@ export const EmergingEventsPanel: React.FC<EmergingEventsPanelProps> = ({
 
       {/* Category Filter Pills */}
       <div style={{ display: 'flex', gap: '0.25rem', overflowX: 'auto', paddingBottom: '2px' }}>
-        {['ALL', 'RAIN', 'THUNDERSTORM', 'FLOOD', 'HEATWAVE', 'STRONG_WINDS'].map((cat) => (
+        {['ALL', 'RAINFALL', 'THUNDERSTORM', 'FLOODING', 'HEATWAVE', 'STRONG_WINDS', 'CYCLONE'].map((cat) => (
           <button
             key={cat}
             type="button"

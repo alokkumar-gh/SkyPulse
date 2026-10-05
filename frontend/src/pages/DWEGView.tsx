@@ -44,6 +44,7 @@ import { ConfidenceFieldLayer } from '../components/dweg/ConfidenceFieldLayer';
 import { PropagationTimeline } from '../components/dweg/PropagationTimeline';
 import { EvidenceChainPanel } from '../components/dweg/EvidenceChainPanel';
 import { WeatherEventDNA } from '../components/events/WeatherEventDNA';
+import { normalizeEvent } from '../store/eventsStore';
 import { dwegAPI, eventsAPI } from '../utils/api';
 import type {
   WeatherEvent,
@@ -93,15 +94,7 @@ export const DWEGView: React.FC = () => {
         if (!isMounted) return;
 
         const rawList = eventsRes?.results || [];
-        const eventsList: WeatherEvent[] = rawList.map((e: any) => ({
-          ...e,
-          latitude: e.location?.lat ?? e.latitude ?? e.centroid_lat,
-          longitude: e.location?.lon ?? e.longitude ?? e.centroid_lon,
-          state: e.location?.state ?? e.state ?? e.primary_state,
-          district: e.location?.district ?? e.district ?? e.primary_district,
-          city: e.location?.city ?? e.city ?? e.primary_city,
-          title: e.title || `${e.category} Incident — ${e.location?.district || e.location?.city || e.location?.state || 'India'}`
-        }));
+        const eventsList: WeatherEvent[] = rawList.map(normalizeEvent).filter(Boolean);
         setActiveEvents(eventsList);
         setPropagationAlerts(alertsRes?.alerts || []);
 

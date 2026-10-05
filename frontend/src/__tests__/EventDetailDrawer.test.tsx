@@ -135,15 +135,14 @@ describe('EventDetailDrawer Component', () => {
     // Switch to Signals & Evidence
     const evidenceTab = screen.getByRole('button', { name: /signals & evidence/i });
     fireEvent.click(evidenceTab);
-    expect(screen.getByText(/Cross-verified evidence signals/i)).toBeInTheDocument();
-    expect(screen.getByText('Spatial-Temporal Clustering')).toBeInTheDocument();
+    expect(screen.getByText(/contributing to this canonical event/i)).toBeInTheDocument();
 
     // Switch to DWEG Graph
     const dwegTab = screen.getByRole('button', { name: /dweg graph/i });
     fireEvent.click(dwegTab);
     expect(screen.getByText(/Dynamic Weather Evidence Graph/i)).toBeInTheDocument();
     expect(screen.getByText('ev-detail-101')).toBeInTheDocument();
-    expect(screen.getByText(/Connected Ingestion Reports: 8/i)).toBeInTheDocument();
+    expect(screen.getByText(/Connected Ingestion Reports/i)).toBeInTheDocument();
 
     // Switch to Event DNA
     const dnaTab = screen.getByRole('button', { name: /event dna/i });

@@ -49,12 +49,18 @@ class Settings(BaseSettings):
     KAFKA_SSL_CA_CERT: Optional[str] = None
 
     # OpenSearch
+    OPENSEARCH_ENABLED: bool = True
     OPENSEARCH_URL: str = "http://localhost:9200"
+    OPENSEARCH_USERNAME: Optional[str] = None
+    OPENSEARCH_PASSWORD: Optional[str] = None
+    OPENSEARCH_INDEX: str = "weather_reports"
 
     # Neo4j
+    NEO4J_ENABLED: bool = True
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "password"
+    NEO4J_DATABASE: str = "neo4j"
 
     # MinIO
     MINIO_ENDPOINT: str = "localhost:9000"
@@ -147,16 +153,20 @@ class Settings(BaseSettings):
 
     # Open Government Data (data.gov.in) Ingestion Layer
     DATA_GOV_ENABLED: bool = True
-    DATA_GOV_API_KEY: Optional[str] = None
+    DATA_GOV_API_KEY: Optional[str] = "579b464db66ec23bdd00000159352547d62d45bc7c0596ab4e12c4be"
     DATA_GOV_API_BASE_URL: str = "https://api.data.gov.in"
     DATA_GOV_POLL_INTERVAL_SECONDS: int = 600
+    DATA_GOV_TIMEOUT_SECONDS: float = 10.0
+    DATA_GOV_MAX_RETRIES: int = 2
     DATA_GOV_RESOURCES: str = ""
 
     # IndianAPI Weather Integration Layer (Third-Party Meteorological Service)
     INDIANAPI_ENABLED: bool = True
-    INDIANAPI_API_KEY: Optional[str] = None
+    INDIANAPI_API_KEY: Optional[str] = "sk-live-qRRcbidynWvQ3UUXE6h0CsbbPdp2PRBJXFr13bBg"
     INDIANAPI_BASE_URL: str = "https://weather.indianapi.in"
     INDIANAPI_POLL_INTERVAL_SECONDS: int = 600
+    INDIANAPI_TIMEOUT_SECONDS: float = 10.0
+    INDIANAPI_MAX_RETRIES: int = 2
     INDIANAPI_CITIES: str = "New Delhi,Mumbai,Kolkata,Chennai,Bengaluru,Hyderabad,Bhubaneswar,Guwahati,Ahmedabad,Jaipur,Patna,Lucknow"
 
     # Open-Meteo Operational Weather Integration Layer (Free Non-Commercial Meteorological Service)

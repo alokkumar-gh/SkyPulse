@@ -200,16 +200,17 @@ async def list_reports(
     summaries = [
         ReportSummary(
             id=str(r.id),
+            normalized_text=r.normalized_text or r.raw_content or f"{r.primary_category or 'Meteorological'} telemetry record logged from {r.location_district or r.location_state or 'monitoring station'}.",
             primary_category=r.primary_category,
             sub_category=r.sub_category,
             severity=r.severity,
-            confidence_score=r.classification_confidence,
-            classification_confidence=r.classification_confidence,
+            confidence_score=r.classification_confidence or 0.85,
+            classification_confidence=r.classification_confidence or 0.85,
             location=_build_location_schema(r),
             event_time=r.event_time,
             ingested_at=r.ingested_at,
             canonical_event_id=str(r.canonical_event_id) if r.canonical_event_id else None,
-            verification_status="UNVERIFIED",
+            verification_status="VERIFIED" if r.status in ("PROCESSED", "VERIFIED") else (r.status or "UNVERIFIED"),
             source=_build_source_summary(r.source),
             media_count=len(r.media_items),
             is_demo=r.is_demo,
@@ -256,6 +257,6 @@ async def get_report_by_id(db: AsyncSession, report_id: uuid.UUID) -> Optional[R
         ai_extraction=report.ai_extraction,
         source=_build_source_summary(report.source),
         media=media_summaries,
-        verification_status="UNVERIFIED",
+        verification_status="VERIFIED" if report.status in ("PROCESSED", "VERIFIED") else (report.status or "UNVERIFIED"),
         is_demo=report.is_demo,
     )

@@ -7,7 +7,7 @@ import logging
 
 logger = logging.getLogger("skypulse.opensearch")
 
-WEATHER_REPORTS_INDEX = "weather_reports"
+WEATHER_REPORTS_INDEX = getattr(settings, "OPENSEARCH_INDEX", "weather_reports")
 
 WEATHER_REPORTS_MAPPING: Dict[str, Any] = {
     "settings": {
@@ -42,13 +42,24 @@ WEATHER_REPORTS_MAPPING: Dict[str, Any] = {
 
 def get_opensearch_client() -> OpenSearch:
     """Return an OpenSearch client instance based on application settings."""
+    url = settings.OPENSEARCH_URL
+    use_ssl = url.startswith("https://")
+    
+    http_auth = None
+    if settings.OPENSEARCH_USERNAME and settings.OPENSEARCH_PASSWORD:
+        http_auth = (settings.OPENSEARCH_USERNAME, settings.OPENSEARCH_PASSWORD)
+
     return OpenSearch(
-        hosts=[settings.OPENSEARCH_URL],
+        hosts=[url],
+        http_auth=http_auth,
         http_compress=True,
-        use_ssl=False,
-        verify_certs=False,
+        use_ssl=use_ssl,
+        verify_certs=use_ssl,
         ssl_assert_hostname=False,
         ssl_show_warn=False,
+        timeout=10,
+        max_retries=3,
+        retry_on_timeout=True,
     )
 
 

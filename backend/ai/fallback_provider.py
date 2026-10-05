@@ -26,7 +26,8 @@ from connectors.normalizer import INDIAN_CITIES_REFERENCE
 CATEGORY_SIGNALS = {
     "RAINFALL": [
         "rain", "rainfall", "downpour", "drizzle", "shower", "cloudburst", "precipitation",
-        "baarish", "barish", "barsat", "monsoon", "torrential", "heavy rain", "wet"
+        "baarish", "barish", "barsat", "monsoon", "torrential", "heavy rain", "wet",
+        "dry spell", "rain deficit", "rainfall deficit", "deficit", "surplus", "excess rain"
     ],
     "THUNDERSTORM": [
         "thunder", "lightning", "thunderstorm", "thunderclap", "bijli", "tufan", "squall",
@@ -55,7 +56,7 @@ CATEGORY_SIGNALS = {
     ],
     "SNOWFALL": ["snow", "snowfall", "blizzard", "ice", "frost", "baraf"],
     "HAILSTORM": ["hail", "hailstorm", "hailstone", "hailstones", "patthar"],
-    "CYCLONE": ["cyclone", "cyclonic storm", "super cyclone", "typhoon", "hurricane", "depression"],
+    "CYCLONE": ["cyclone", "cyclonic storm", "super cyclone", "typhoon", "hurricane"],
     "SMOG": ["smog", "toxic air", "air pollution", "severe aqi", "hazardous aqi", "smoke"],
 }
 
@@ -102,8 +103,103 @@ class FallbackAIProvider(AIProvider):
         return True
 
     async def classify_event(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> ClassificationResult:
-        """Classify report using multi-signal term matching and contextual cues."""
+        """Classify report using multi-signal term matching and contextual cues with relevance gating."""
+        try:
+            from connectors.weather_relevance_engine import WeatherRelevanceEngine
+            assessment = WeatherRelevanceEngine.evaluate(
+                text=text,
+                claimed_category=metadata.get("suggested_category") if metadata else None,
+                location_state=metadata.get("state") if metadata else None,
+                location_district=metadata.get("district") if metadata else None,
+                observed_telemetry=metadata.get("observed_telemetry") if metadata else None,
+                tracked_parent_system_id=metadata.get("parent_system_id") if metadata else None,
+            )
+            if not assessment.is_relevant:
+                return ClassificationResult(
+                    category="UNKNOWN",
+                    confidence=0.15,
+                    severity=1,
+                    evidence_signals=[f"gated_rejection:{assessment.rejection_reason}"],
+                    method="relevance_gated",
+                    model="rule_based_v2",
+                    fallback_used=True,
+                )
+            return ClassificationResult(
+                category=assessment.primary_category,
+                sub_category=assessment.phenomenon,
+                phenomenon=assessment.phenomenon,
+                event_nature=assessment.incident_nature.value,
+                temporal_scope=assessment.temporal_scope,
+                is_current_observation=assessment.is_current_observation,
+                evidence_basis=assessment.evidence_basis,
+                confidence=round(assessment.confidence, 2),
+                severity=assessment.severity,
+                evidence_signals=assessment.evidence_signals,
+                method="fallback_heuristic",
+                model="rule_based_v2",
+                fallback_used=True,
+            )
+        except Exception:
+            assessment = None
+
         text_lower = text.lower()
+
+        # Semantic Deficit / Anomaly / Excess / Dry Spell / No Rain Detection
+        deficit_patterns = [
+            r"\b(rainfall|rain|monsoon)\s+deficit\b",
+            r"\b(below[\s-]normal|below[\s-]average)\s+(rainfall|rain|monsoon|precipitation)\b",
+            r"\b(rain|rainfall|monsoon)\s+(shortfall|shortage)\b",
+            r"\b(deficient|large\s+deficient)\s+(rainfall|rain|monsoon)\b",
+            r"\bless\s+rainfall\s+than\s+normal\b",
+            r"\bmonsoon\s+deficit\b",
+            r"\brainfall\s+departure\s+of\s+-\d+",
+            r"\b\d+%\s+below\s+normal\b",
+            r"\bsub[\s-]normal\s+(rainfall|rain|monsoon)\b",
+            r"\bmonsoon\s+withdraws.*?\b(?:rain|rainfall)\s+deficit\b",
+            r"\brecord(?:s|ed)?\s+(?:rain|rainfall)\s+deficit\b",
+        ]
+        is_deficit = any(re.search(p, text_lower) for p in deficit_patterns)
+
+        excess_patterns = [
+            r"\b(above[\s-]normal|above[\s-]average)\s+(rainfall|rain|monsoon|precipitation)\b",
+            r"\b(rainfall|rain|monsoon)\s+surplus\b",
+            r"\b(excess|large\s+excess)\s+(rainfall|rain|monsoon)\b",
+            r"\b\d+%\s+above\s+normal\b",
+            r"\bsurplus\s+(rainfall|rain|monsoon)\b",
+            r"\brainfall\s+departure\s+of\s+\+\d+",
+        ]
+        is_excess = any(re.search(p, text_lower) for p in excess_patterns)
+
+        no_rain_patterns = [
+            r"\bno\s+rainfall\s+(?:was\s+)?recorded\b",
+            r"\bno\s+rain\s+(?:was\s+)?recorded\b",
+            r"\bzero\s+(?:rainfall|rain)\b",
+            r"\b0(?:\.0)?\s*mm\s+(?:of\s+)?rain\b",
+            r"\brain\s*=\s*0\b",
+            r"\bnil\s+rainfall\b",
+        ]
+        is_no_rain = any(re.search(p, text_lower) for p in no_rain_patterns)
+
+        dry_spell_patterns = [
+            r"\bdry\s+spell\b",
+            r"\bprolonged\s+dry\s+spell\b",
+            r"\bweeks\s+of\s+below[\s-]normal\b",
+            r"\bextended\s+dry\s+period\b",
+        ]
+        is_dry_spell = any(re.search(p, text_lower) for p in dry_spell_patterns)
+
+        forecast_patterns = [
+            r"\b(predicts?|forecasts?|likely\s+to\s+receive|may\s+witness|may\s+receive|expected\s+to\s+receive)\s+.*?(?:rain|rainfall|downpour|shower|weather)\b",
+            r"\b(forecast\s+for|extended\s+outlook|model\s+predicts?|ecmwf|gfs)\b",
+        ]
+        is_forecast = any(re.search(p, text_lower) for p in forecast_patterns)
+
+        warning_patterns = [
+            r"\b(issues?\s+.*?(?:warning|alert)|red\s+alert|orange\s+alert|yellow\s+alert)\b",
+            r"\b(heavy\s+rainfall\s+warning|storm\s+warning|weather\s+warning)\b",
+        ]
+        is_warning = any(re.search(p, text_lower) for p in warning_patterns)
+
         scores: Dict[str, float] = {}
         matched_signals: Dict[str, List[str]] = {}
 
@@ -120,32 +216,44 @@ class FallbackAIProvider(AIProvider):
                 scores[cat] = cat_score
                 matched_signals[cat] = signals
 
-        # If connector suggested a category, boost it slightly
+        # If connector suggested a category, boost slightly only if not cyclone
         if metadata and metadata.get("suggested_category"):
             s_cat = metadata["suggested_category"].upper()
-            if s_cat in scores:
-                scores[s_cat] += 2.0
-            elif s_cat in CATEGORY_SIGNALS:
-                scores[s_cat] = 2.0
-                matched_signals[s_cat] = ["connector_suggested"]
+            if s_cat != "CYCLONE":
+                if s_cat in scores:
+                    scores[s_cat] += 2.0
+                elif s_cat in CATEGORY_SIGNALS:
+                    scores[s_cat] = 2.0
+                    matched_signals[s_cat] = ["connector_suggested"]
 
         # Ambiguous / No signals -> UNKNOWN
-        if not scores:
+        if not scores and not (is_deficit or is_excess or is_no_rain or is_dry_spell):
             return ClassificationResult(
                 category="UNKNOWN",
+                sub_category="UNKNOWN",
+                phenomenon="UNKNOWN",
+                event_nature="OBSERVATION",
+                temporal_scope="CURRENT",
+                is_current_observation=False,
+                evidence_basis="NEWS_REPORT",
                 confidence=0.25,
                 severity=1,
                 evidence_signals=["insufficient_signals"],
                 method="fallback_heuristic",
-                model="rule_based_v1",
+                model="rule_based_v2",
                 fallback_used=True,
             )
 
         # Find best category
-        best_cat = max(scores, key=scores.get)
-        raw_score = scores[best_cat]
-        # Normalize confidence to [0.45, 0.95]
-        confidence = min(0.95, 0.45 + (raw_score * 0.12))
+        best_cat = max(scores, key=scores.get) if scores else "RAINFALL"
+
+        # Rigorous cyclone check
+        if best_cat == "CYCLONE" and assessment and not assessment.is_cyclone_rigorous:
+            best_cat = "RAINFALL" if "rain" in text_lower else ("STRONG_WINDS" if "wind" in text_lower else "RAINFALL")
+
+        raw_score = scores.get(best_cat, 1.0)
+        # Normalize confidence to [0.55, 0.95]
+        confidence = min(0.95, 0.55 + (raw_score * 0.10))
 
         # Severity estimation
         severity = 2  # default moderate
@@ -154,31 +262,111 @@ class FallbackAIProvider(AIProvider):
                 severity = sev_level
                 break
 
-        # Sub-category refinement
+        # Semantic subtype & phenomenon resolution
         sub_cat = None
-        if best_cat == "FLOODING":
+        phenomenon = None
+        event_nature = "OBSERVATION"
+        temporal_scope = "CURRENT"
+        is_current_observation = True
+        evidence_basis = "CURRENT_OBSERVATION"
+
+        if is_deficit:
+            best_cat = "RAINFALL"
+            sub_cat = "RAINFALL_DEFICIT"
+            phenomenon = "RAINFALL_DEFICIT"
+            event_nature = "ANOMALY"
+            temporal_scope = "SEASONAL" if ("monsoon" in text_lower or "season" in text_lower or "june" in text_lower or "september" in text_lower) else "MONTHLY"
+            is_current_observation = False
+            evidence_basis = "RAINFALL_ANOMALY"
+            confidence = max(0.80, confidence)
+        elif is_excess:
+            best_cat = "RAINFALL"
+            sub_cat = "RAINFALL_EXCESS"
+            phenomenon = "RAINFALL_EXCESS"
+            event_nature = "ANOMALY"
+            temporal_scope = "SEASONAL" if ("monsoon" in text_lower or "season" in text_lower) else "MONTHLY"
+            is_current_observation = False
+            evidence_basis = "RAINFALL_ANOMALY"
+            confidence = max(0.80, confidence)
+        elif is_dry_spell:
+            best_cat = "RAINFALL"
+            sub_cat = "DRY_SPELL"
+            phenomenon = "DRY_SPELL"
+            event_nature = "ANOMALY"
+            temporal_scope = "WEEKLY"
+            is_current_observation = False
+            evidence_basis = "RAINFALL_ANOMALY"
+        elif is_no_rain:
+            best_cat = "RAINFALL"
+            sub_cat = "NO_RAIN"
+            phenomenon = "NO_RAIN"
+            event_nature = "OBSERVATION"
+            temporal_scope = "CURRENT"
+            is_current_observation = True
+            evidence_basis = "STATION_TELEMETRY"
+        elif is_warning:
+            event_nature = "WARNING"
+            is_current_observation = False
+            evidence_basis = "OFFICIAL_WARNING"
+            if best_cat == "RAINFALL":
+                sub_cat = "HEAVY_RAINFALL"
+                phenomenon = "HEAVY_RAINFALL"
+        elif is_forecast:
+            event_nature = "FORECAST"
+            is_current_observation = False
+            evidence_basis = "FORECAST"
+            if best_cat == "RAINFALL":
+                sub_cat = "RAINFALL_OBSERVED"
+                phenomenon = "RAINFALL_OBSERVED"
+        elif best_cat == "FLOODING":
             if "urban" in text_lower or "street" in text_lower or "road" in text_lower:
                 sub_cat = "URBAN_FLOOD"
+                phenomenon = "URBAN_FLOOD"
             elif "river" in text_lower or "dam" in text_lower:
                 sub_cat = "RIVERINE_FLOOD"
+                phenomenon = "RIVERINE_FLOOD"
             elif "flash" in text_lower:
                 sub_cat = "FLASH_FLOOD"
+                phenomenon = "FLASH_FLOOD"
+            else:
+                sub_cat = "URBAN_FLOOD"
+                phenomenon = "URBAN_FLOOD"
         elif best_cat == "RAINFALL":
-            if "cloudburst" in text_lower:
-                sub_cat = "CLOUDBURST"
+            if "cloudburst" in text_lower or "extremely heavy" in text_lower or "torrential" in text_lower:
+                sub_cat = "EXTREME_RAINFALL"
+                phenomenon = "EXTREME_RAINFALL"
                 severity = 4
-            elif "drizzle" in text_lower:
+            elif "heavy" in text_lower or "downpour" in text_lower or "lashes" in text_lower:
+                sub_cat = "HEAVY_RAINFALL"
+                phenomenon = "HEAVY_RAINFALL"
+                severity = max(3, severity)
+            elif "drizzle" in text_lower or "light rain" in text_lower:
                 sub_cat = "DRIZZLE"
+                phenomenon = "RAINFALL_OBSERVED"
                 severity = 1
+            else:
+                sub_cat = "RAINFALL_OBSERVED"
+                phenomenon = "RAINFALL_OBSERVED"
+
+        signals = matched_signals.get(best_cat, [])
+        if phenomenon:
+            signals.append(f"phenomenon:{phenomenon}")
+        if event_nature:
+            signals.append(f"nature:{event_nature}")
 
         return ClassificationResult(
             category=best_cat,
             sub_category=sub_cat,
+            phenomenon=phenomenon or sub_cat,
+            event_nature=event_nature,
+            temporal_scope=temporal_scope,
+            is_current_observation=is_current_observation,
+            evidence_basis=evidence_basis,
             confidence=round(confidence, 2),
             severity=severity,
-            evidence_signals=matched_signals.get(best_cat, []),
+            evidence_signals=signals,
             method="fallback_heuristic",
-            model="rule_based_v1",
+            model="rule_based_v2",
             fallback_used=True,
         )
 
@@ -464,12 +652,11 @@ class FallbackAIProvider(AIProvider):
         nearby_reports: Optional[List[Dict[str, Any]]] = None,
         source_trust: float = 0.5,
         media_analysis: Optional[MediaAnalysisResult] = None,
+        physical_observation: Optional[Dict[str, Any]] = None,
     ) -> EvidenceAssessmentResult:
         """
         Synthesize multi-source signals into an explainable verification verdict.
-        Formula:
-        0.30 * official_match + 0.25 * nearby_corroboration + 0.20 * source_trust
-        + 0.10 * image_match + 0.10 * temporal_consistency + 0.05 * historical_baseline
+        Checks official bulletins, nearby reports, source trust, media, and physical observations.
         """
         claimed_cat = report_data.get("primary_category") or report_data.get("category") or report_data.get("suggested_category") or "UNKNOWN"
         nearby_count = len(nearby_reports or [])
@@ -486,41 +673,68 @@ class FallbackAIProvider(AIProvider):
                 official_match = 0.1
                 official_desc = f"Official observation reports {off_cat}, differing from {claimed_cat}"
 
+        # 2. Physical Observation Corroboration / Contradiction
+        physical_obs_match = 0.5
+        has_contradiction = False
+        contradiction_reason = None
+        
+        obs = physical_observation or report_data.get("physical_observation")
+        if obs:
+            p_cond = (obs.get("weather_condition") or "").lower()
+            p_wind = float(obs.get("wind_speed_kmh") or 0.0)
+            p_precip = float(obs.get("precipitation_mm") or 0.0)
 
-        # 2. Nearby Corroboration
+            if claimed_cat == "CYCLONE":
+                if p_wind < 40.0 and p_precip == 0.0 and ("clear" in p_cond or "sun" in p_cond):
+                    has_contradiction = True
+                    physical_obs_match = 0.05
+                    contradiction_reason = f"Station observation records clear sky ({p_wind:.1f} km/h wind, 0 mm rain), contradicting cyclonic conditions."
+                elif p_wind >= 62.0:
+                    physical_obs_match = 1.0
+            elif claimed_cat in ("RAINFALL", "FLOODING"):
+                if p_precip == 0.0 and ("clear" in p_cond or "sun" in p_cond):
+                    has_contradiction = True
+                    physical_obs_match = 0.15
+                    contradiction_reason = "Station telemetry confirms zero rainfall and clear sky."
+                elif p_precip > 0.0 or "rain" in p_cond:
+                    physical_obs_match = 1.0
+
+        # 3. Nearby Corroboration
         nearby_score = min(1.0, nearby_count / 3.0)
 
-        # 3. Source Trust
+        # 4. Source Trust
         trust_score = max(0.0, min(1.0, source_trust))
 
-        # 4. Media Match
-        image_score = 0.5  # neutral
+        # 5. Media Match
+        image_score = 0.5
         if media_analysis and media_analysis.has_media:
             if media_analysis.supports_claimed_event is True:
                 image_score = 1.0
             elif media_analysis.supports_claimed_event is False:
                 image_score = 0.1
 
-        # 5. Temporal Consistency
+        # 6. Temporal Consistency & Historical Baseline
         temporal_score = 0.85
-
-        # 6. Historical Baseline
         now_month = datetime.now(timezone.utc).month
         hist_score = 0.8 if claimed_cat in SEASONAL_EXPECTATIONS.get(now_month, []) else 0.4
 
         # Composite verification score
         composite = (
-            0.30 * official_match
-            + 0.25 * nearby_score
-            + 0.20 * trust_score
+            0.25 * official_match
+            + 0.20 * physical_obs_match
+            + 0.20 * nearby_score
+            + 0.15 * trust_score
             + 0.10 * image_score
-            + 0.10 * temporal_score
+            + 0.05 * temporal_score
             + 0.05 * hist_score
         )
+        if has_contradiction:
+            composite = max(0.05, composite - 0.35)
+
         composite = max(0.0, min(1.0, composite))
 
         # Determine verification status
-        if official_match <= 0.1 and nearby_count == 0 and composite < 0.35:
+        if has_contradiction or (official_match <= 0.1 and nearby_count == 0 and composite < 0.35):
             status = "CONTRADICTED"
         elif composite >= 0.75:
             status = "VERIFIED"
@@ -531,15 +745,14 @@ class FallbackAIProvider(AIProvider):
         else:
             status = "REQUIRES_REVIEW"
 
-        explanation = (
-            f"Verdict: {status} (confidence: {composite:.0%}). "
-            f"Source trust: {trust_score:.2f}. "
-            f"{nearby_count} corroborating nearby reports. "
-            f"{official_desc}."
-        )
+        explanation_parts = [f"Verdict: {status} (confidence: {composite:.0%})", f"Source trust: {trust_score:.2f}", f"{nearby_count} corroborating nearby reports", official_desc]
+        if contradiction_reason:
+            explanation_parts.append(contradiction_reason)
+        explanation = ". ".join(explanation_parts) + "."
 
         signal_scores = {
             "official_match": round(official_match, 2),
+            "physical_obs_match": round(physical_obs_match, 2),
             "nearby_corroboration": round(nearby_score, 2),
             "source_trust": round(trust_score, 2),
             "image_evidence": round(image_score, 2),
@@ -549,6 +762,7 @@ class FallbackAIProvider(AIProvider):
 
         evidence_summary = [
             {"type": "OFFICIAL_API", "score": official_match, "detail": official_desc},
+            {"type": "PHYSICAL_OBSERVATION", "score": physical_obs_match, "detail": contradiction_reason or "Station observation baseline checked"},
             {"type": "CORROBORATING_REPORTS", "count": nearby_count, "score": nearby_score},
             {"type": "SOURCE_TRUST", "score": trust_score},
             {"type": "MEDIA_ANALYSIS", "score": image_score},

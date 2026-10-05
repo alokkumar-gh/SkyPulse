@@ -17,6 +17,8 @@ import {
   SeverityBadge,
   VerificationBadge,
   ConfidenceBar,
+  PhenomenonBadge,
+  TemporalScopeBadge,
 } from '../ui/Badges';
 import { Button } from '../ui/Primitives';
 import {
@@ -134,8 +136,14 @@ export const WeatherEventDNA: React.FC<WeatherEventDNAProps> = ({
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
             <CategoryBadge category={dna.event_type as any} />
+            {dna.phenomenon && dna.phenomenon !== dna.event_type && (
+              <PhenomenonBadge phenomenon={dna.phenomenon} />
+            )}
+            {dna.temporal_scope && (
+              <TemporalScopeBadge scope={dna.temporal_scope} />
+            )}
             <SeverityBadge severity={dna.severity} />
             <VerificationBadge status={dna.status as any} />
           </div>

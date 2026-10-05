@@ -36,11 +36,11 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.anomaly_detector import AnomalyDetector
@@ -54,9 +54,11 @@ from ai.opensearch_indexer import opensearch_indexer
 from ai.source_trust import SourceTrustEngine
 from ai.verification_engine import VerificationEngine
 from app.core.config import settings
+from app.core.freshness_policy import calculate_event_expiry
 from app.core.websocket_manager import build_event_envelope, ws_manager
 from app.models.enums import (
     CorroborationType,
+    EventLifecycleStatus,
     ReportStatus,
     SourceType,
     VerificationStatus,
@@ -177,6 +179,40 @@ class UnifiedIngestionPipelineService:
             # Extract raw media URLs from media items
             media_urls = [m.url for m in norm.media if m.url]
 
+            # 1b. Exact Article Idempotency Check: Prevent duplicate reports and events
+            if norm.idempotency_key or norm.external_id:
+                cutoff_recent = datetime.now(timezone.utc) - timedelta(hours=48)
+                rep_res = await db.execute(
+                    select(WeatherReport)
+                    .where(WeatherReport.ingested_at >= cutoff_recent)
+                    .order_by(WeatherReport.ingested_at.desc())
+                    .limit(200)
+                )
+                for existing_r in rep_res.scalars().all():
+                    emeta = existing_r.metadata_ or {}
+                    match_idemp = norm.idempotency_key and emeta.get("idempotency_key") == norm.idempotency_key
+                    match_ext = norm.external_id and emeta.get("external_id") == norm.external_id
+                    if match_idemp or match_ext:
+                        if existing_r.canonical_event_id:
+                            ev_res = await db.execute(
+                                select(WeatherEvent).where(WeatherEvent.id == existing_r.canonical_event_id)
+                            )
+                            ev_obj = ev_res.scalar_one_or_none()
+                            if ev_obj:
+                                ev_obj.last_seen_at = datetime.now(timezone.utc)
+                                await db.commit()
+
+                        return UnifiedIngestionResult(
+                            report_id=str(existing_r.id),
+                            tracking_id=norm.tracking_id,
+                            category=existing_r.primary_category or norm.primary_category,
+                            is_india_valid=True,
+                            is_quarantined=False,
+                            is_duplicate=True,
+                            canonical_event_id=str(existing_r.canonical_event_id) if existing_r.canonical_event_id else None,
+                            status="SUCCESS",
+                        )
+
             # 2. Persist WeatherReport in PostgreSQL
             report = WeatherReport(
                 id=uuid.UUID(norm.ingestion_id),
@@ -214,7 +250,7 @@ class UnifiedIngestionPipelineService:
 
             # If foreign quarantined or non-weather, keep in DB as audit but skip canonical event creation
             if norm.is_quarantined and not norm.is_india_valid:
-                report.status = ReportStatus.REJECTED.value
+                report.status = ReportStatus.FAILED.value
                 await db.commit()
                 return UnifiedIngestionResult(
                     report_id=str(report.id),
@@ -275,12 +311,39 @@ class UnifiedIngestionPipelineService:
         source = src_res.scalar_one_or_none()
         src_trust = source.trust_score if source else 0.50
         src_type = source.source_type if source else "UNKNOWN"
+        src_name = source.name if source else "Unknown Source"
 
         text = report.normalized_text or report.raw_content or ""
 
+        # 1b. National Weather Relevance Gating & False Positive Protection
+        from connectors.weather_relevance_engine import WeatherRelevanceEngine, IncidentNature
+        meta_dict = report.metadata_ if isinstance(report.metadata_, dict) else {}
+        raw_p = meta_dict.get("raw_payload", {}) if isinstance(meta_dict, dict) else {}
+        article_title = raw_p.get("title")
+
+        relevance_assessment = WeatherRelevanceEngine.evaluate(
+            text=text,
+            title=article_title,
+            source_name=src_name,
+            source_type=src_type,
+            claimed_category=report.primary_category,
+            has_gps=bool(report.location_lat and report.location_lon),
+        )
+
+        if not relevance_assessment.is_relevant:
+            logger.info(
+                "Report %s gated as non-weather/drill: %s (Reason: %s)",
+                report.id, relevance_assessment.incident_nature.value, relevance_assessment.rejection_reason
+            )
+            report.status = ReportStatus.FAILED.value
+            if isinstance(report.metadata_, dict):
+                report.metadata_["gating_rejection"] = relevance_assessment.to_dict()
+            await db.flush()
+            return None
+
         # 2. Event Classification
         classification = await self._classifier.classify(
-            text, metadata={"suggested_category": report.primary_category}
+            text, metadata={"suggested_category": relevance_assessment.primary_category or report.primary_category}
         )
         report.primary_category = classification.category
         report.sub_category = classification.sub_category
@@ -288,11 +351,19 @@ class UnifiedIngestionPipelineService:
         report.classification_confidence = classification.confidence
         report.classification_method = classification.method
 
+        # If gated from cyclone or ungrounded
+        if report.primary_category == "CYCLONE" and not relevance_assessment.is_cyclone_rigorous:
+            report.primary_category = relevance_assessment.primary_category
+
+        if isinstance(report.metadata_, dict):
+            report.metadata_["incident_nature"] = relevance_assessment.incident_nature.value
+            report.metadata_["relevance_assessment"] = relevance_assessment.to_dict()
+
         # 3. NLP Entity & Meteorological Extraction
         extraction = await self._nlp_extractor.extract(text)
         report.ai_extraction = extraction.model_dump(mode="json")
 
-        # Enrich location if missing but NLP extracted
+        # Enrich location if missing but NLP extracted with high confidence
         if not report.location_city and extraction.resolved_city:
             report.location_city = extraction.resolved_city
             report.location_district = extraction.resolved_district
@@ -312,22 +383,37 @@ class UnifiedIngestionPipelineService:
         media_urls = (report.metadata_ or {}).get("media_urls", [])
         media_res = await self._image_analyzer.analyze(media_urls, claimed_category=classification.category)
 
-        # 6. Spatiotemporal Clustering & Deduplication
         related_cats = {report.primary_category}
-        if report.primary_category == "FLOODING":
-            related_cats.add("RAINFALL")
-        elif report.primary_category == "RAINFALL":
-            related_cats.add("FLOODING")
+        if report.primary_category in ("FLOODING", "RAINFALL"):
+            related_cats.update(["FLOODING", "RAINFALL"])
+        elif report.primary_category in ("THUNDERSTORM", "STRONG_WINDS"):
+            related_cats.update(["THUNDERSTORM", "STRONG_WINDS", "RAINFALL"])
+        elif report.primary_category == "CYCLONE":
+            related_cats.update(["CYCLONE", "STRONG_WINDS", "RAINFALL", "FLOODING"])
 
         active_events_q = (
             select(WeatherEvent)
             .where(
                 WeatherEvent.is_active == True,
-                WeatherEvent.category.in_(list(related_cats)),
+                WeatherEvent.is_deleted == False,
             )
-            .order_by(WeatherEvent.last_updated_at.desc())
-            .limit(15)
         )
+        if report.primary_category and report.primary_category != "UNKNOWN":
+            active_events_q = active_events_q.where(
+                or_(
+                    WeatherEvent.category.in_(list(related_cats)),
+                    WeatherEvent.category == "UNKNOWN",
+                )
+            )
+        if report.location_state:
+            active_events_q = active_events_q.where(
+                or_(
+                    WeatherEvent.primary_state.ilike(f"%{report.location_state}%"),
+                    WeatherEvent.primary_state.is_(None),
+                )
+            )
+
+        active_events_q = active_events_q.order_by(WeatherEvent.last_updated_at.desc()).limit(50)
         evt_res = await db.execute(active_events_q)
         active_events = evt_res.scalars().all()
 
@@ -337,6 +423,9 @@ class UnifiedIngestionPipelineService:
             "primary_category": report.primary_category,
             "latitude": report.location_lat,
             "longitude": report.location_lon,
+            "state": report.location_state,
+            "district": report.location_district,
+            "city": report.location_city,
             "event_time": report.event_time or report.ingested_at,
             "idempotency_key": (report.metadata_ or {}).get("idempotency_key"),
             "phash": media_res.phash,
@@ -347,13 +436,34 @@ class UnifiedIngestionPipelineService:
         dup_eval = None
 
         for cand_event in active_events:
+            # Query candidate event's primary report text & idempotency for precise matching
+            cand_rep_q = (
+                select(WeatherReport.normalized_text, WeatherReport.raw_content, WeatherReport.metadata_)
+                .where(WeatherReport.canonical_event_id == cand_event.id)
+                .order_by(WeatherReport.ingested_at.asc())
+                .limit(1)
+            )
+            cand_rep_res = await db.execute(cand_rep_q)
+            cand_rep_row = cand_rep_res.first()
+            cand_text = ""
+            cand_idemp = None
+            if cand_rep_row:
+                cand_text = cand_rep_row[0] or cand_rep_row[1] or ""
+                cand_m = cand_rep_row[2] or {}
+                cand_idemp = cand_m.get("idempotency_key")
+
             cand_dict = {
                 "id": str(cand_event.id),
                 "canonical_event_id": str(cand_event.id),
                 "category": cand_event.category,
                 "latitude": cand_event.centroid_lat,
                 "longitude": cand_event.centroid_lon,
+                "state": cand_event.primary_state,
+                "district": cand_event.primary_district,
+                "city": cand_event.primary_city,
                 "event_time": cand_event.last_updated_at,
+                "text": cand_text,
+                "idempotency_key": cand_idemp,
             }
             cand_eval = DeduplicationEngine.evaluate_candidate(report_dict, cand_dict)
             if cand_eval.is_duplicate or cand_eval.verdict in ("EXACT_DUPLICATE", "NEAR_DUPLICATE"):
@@ -370,7 +480,20 @@ class UnifiedIngestionPipelineService:
             report.canonical_event_id = canonical_event.id
 
             canonical_event.evidence_count += 1
-            canonical_event.last_updated_at = datetime.now(timezone.utc)
+            now_utc = datetime.now(timezone.utc)
+            rep_time = report.event_time or now_utc
+            if canonical_event.last_updated_at.tzinfo is None:
+                canonical_event.last_updated_at = canonical_event.last_updated_at.replace(tzinfo=timezone.utc)
+            if rep_time.tzinfo is None:
+                rep_time = rep_time.replace(tzinfo=timezone.utc)
+            if rep_time > canonical_event.last_updated_at:
+                canonical_event.last_updated_at = rep_time
+
+            canonical_event.last_seen_at = now_utc
+            canonical_event.expires_at = calculate_event_expiry(
+                canonical_event.category, canonical_event.last_updated_at, canonical_event.severity
+            )
+            canonical_event.lifecycle_status = EventLifecycleStatus.ACTIVE.value
             if report.location_lat and report.location_lon and canonical_event.centroid_lat:
                 canonical_event.centroid_lat = round((canonical_event.centroid_lat + report.location_lat) / 2.0, 4)
                 canonical_event.centroid_lon = round((canonical_event.centroid_lon + report.location_lon) / 2.0, 4)
@@ -391,6 +514,12 @@ class UnifiedIngestionPipelineService:
             if report.location_lat and report.location_lon:
                 point_geom = WKTElement(f"POINT({report.location_lon} {report.location_lat})", srid=4326)
 
+            now_utc = datetime.now(timezone.utc)
+            obs_dt = report.event_time or now_utc
+            expires_at = calculate_event_expiry(
+                report.primary_category or "UNKNOWN", obs_dt, report.severity or 2
+            )
+
             canonical_event = WeatherEvent(
                 id=uuid.uuid4(),
                 category=report.primary_category or "UNKNOWN",
@@ -404,6 +533,13 @@ class UnifiedIngestionPipelineService:
                 primary_state=report.location_state,
                 primary_district=report.location_district,
                 primary_city=report.location_city,
+                first_reported_at=obs_dt,
+                observed_at=obs_dt,
+                ingested_at=now_utc,
+                last_seen_at=now_utc,
+                last_updated_at=obs_dt,
+                expires_at=expires_at,
+                lifecycle_status=EventLifecycleStatus.ACTIVE.value,
                 evidence_count=1,
                 is_demo=report.is_demo,
                 is_active=True,
@@ -558,40 +694,79 @@ class UnifiedIngestionPipelineService:
             pass
 
         # 13. Publish to Kafka / In-Memory Event Bus & WebSocket Broadcast
-        event_payload = {
+        now_iso = datetime.now(timezone.utc).isoformat()
+        obs_dt = canonical_event.effective_observed_at
+        ing_dt = canonical_event.effective_ingested_at
+        seen_dt = canonical_event.effective_last_seen_at
+        exp_dt = canonical_event.effective_expires_at
+
+        event_dict = {
+            "id": str(canonical_event.id),
             "event_id": str(canonical_event.id),
             "report_id": str(report.id),
             "category": canonical_event.category,
+            "sub_category": canonical_event.sub_category,
             "severity": canonical_event.severity,
             "confidence": canonical_event.confidence_score,
+            "confidence_score": canonical_event.confidence_score,
             "verification_status": canonical_event.verification_status,
+            "status": canonical_event.effective_lifecycle_status,
+            "lifecycle_status": canonical_event.effective_lifecycle_status,
             "primary_city": canonical_event.primary_city,
+            "primary_district": canonical_event.primary_district,
             "primary_state": canonical_event.primary_state,
             "centroid_lat": canonical_event.centroid_lat,
             "centroid_lon": canonical_event.centroid_lon,
+            "latitude": canonical_event.centroid_lat,
+            "longitude": canonical_event.centroid_lon,
+            "location": {
+                "state": canonical_event.primary_state,
+                "district": canonical_event.primary_district,
+                "city": canonical_event.primary_city,
+                "lat": canonical_event.centroid_lat,
+                "lon": canonical_event.centroid_lon,
+            },
+            "observed_at": obs_dt.isoformat() if obs_dt else now_iso,
+            "ingested_at": ing_dt.isoformat() if ing_dt else now_iso,
+            "last_seen_at": seen_dt.isoformat() if seen_dt else now_iso,
+            "expires_at": exp_dt.isoformat() if exp_dt else None,
+            "first_reported_at": canonical_event.first_reported_at.isoformat() if canonical_event.first_reported_at else now_iso,
+            "last_updated_at": canonical_event.last_updated_at.isoformat() if canonical_event.last_updated_at else now_iso,
             "evidence_count": canonical_event.evidence_count,
+            "supporting_signal_count": canonical_event.evidence_count,
             "is_anomalous": canonical_event.is_anomalous,
             "is_demo": canonical_event.is_demo,
+            "is_active": canonical_event.is_active and (canonical_event.effective_lifecycle_status != "EXPIRED"),
         }
 
         # Kafka topics
         try:
-            await kafka_producer.publish(TOPIC_AI_PROCESSED, event_payload, key=str(canonical_event.id))
+            await kafka_producer.publish(TOPIC_AI_PROCESSED, event_dict, key=str(canonical_event.id))
             if canonical_event.verification_status in ("VERIFIED", "CONTRADICTED"):
-                await kafka_producer.publish(TOPIC_VERIFICATION_UPDATES, event_payload, key=str(canonical_event.id))
+                await kafka_producer.publish(TOPIC_VERIFICATION_UPDATES, event_dict, key=str(canonical_event.id))
             if canonical_event.is_anomalous:
-                await kafka_producer.publish(TOPIC_ANOMALIES, event_payload, key=str(canonical_event.id))
+                await kafka_producer.publish(TOPIC_ANOMALIES, event_dict, key=str(canonical_event.id))
         except Exception:
             pass
 
         # Direct WebSocket fanout to frontend
         try:
+            is_new = (canonical_event.evidence_count <= 1 and not report.is_duplicate)
+            primary_type = "EVENT_CREATED" if is_new else "EVENT_UPDATED"
+            legacy_type = "weather_event.created" if is_new else "weather_event.updated"
+
             ws_envelope = build_event_envelope(
-                event_type="weather_event.updated" if canonical_event.evidence_count > 1 else "weather_event.created",
+                event_type=primary_type,
                 event_id=str(canonical_event.id),
-                data=event_payload,
+                data=event_dict,
             )
+            ws_envelope["legacy_type"] = legacy_type
+            ws_envelope["event"] = event_dict
+            ws_envelope["server_time"] = now_iso
+            ws_envelope["revision"] = int(datetime.now(timezone.utc).timestamp() * 1000)
+
             await ws_manager.broadcast(ws_envelope)
+            logger.info("Broadcasted %s for event %s (evidence=%d)", primary_type, canonical_event.id, canonical_event.evidence_count)
         except Exception as ws_err:
             logger.debug("WebSocket broadcast non-fatal exception: %s", ws_err)
 
@@ -627,23 +802,51 @@ class UnifiedIngestionPipelineService:
         try:
             s_uuid = uuid.UUID(str(source_id_str))
             src_res = await db.execute(select(Source).where(Source.id == s_uuid))
-            if src_res.scalar_one_or_none():
-                return s_uuid
+            src_obj = src_res.scalar_one_or_none()
+            if src_obj:
+                return src_obj.id
         except (ValueError, TypeError):
-            pass
+            s_uuid = None
 
-        # 3. Fallback to or create default source for connector type
-        res = await db.execute(select(Source).where(Source.source_type == db_source_type, Source.is_demo == is_demo))
+        # 3. Dedicated name-based lookup
+        default_name = f"{st_clean.replace('_', ' ').title()} Stream"
+        if "00000000-0000-0000-0000-000000000008" in str(source_id_str) or "REGIONAL_RSS" in st_upper:
+            default_name = "Regional News RSS Feeds"
+            db_source_type = SourceType.RSS_FEED.value
+        elif "00000000-0000-0000-0000-000000000003" in str(source_id_str) or "GNEWS" in st_upper:
+            default_name = "Google News RSS Discovery"
+            db_source_type = SourceType.RSS_FEED.value
+        elif "GDACS" in st_upper:
+            default_name = "GDACS Tropical Alert Stream"
+            db_source_type = SourceType.GOVERNMENT_API.value
+        elif "IMD" in st_upper:
+            default_name = "IMD Doppler Radar & Synoptic Grid"
+            db_source_type = SourceType.GOVERNMENT_API.value
+
+        res = await db.execute(select(Source).where(Source.name == default_name, Source.is_demo == is_demo))
         found = res.scalars().first()
         if found:
             return found.id
 
-        # 4. Create new source
+        # 4. Fallback search by source type excluding mismatched specific named sources
+        if db_source_type == SourceType.RSS_FEED.value and "GDACS" not in default_name:
+            res = await db.execute(select(Source).where(
+                Source.source_type == db_source_type,
+                Source.is_demo == is_demo,
+                ~Source.name.ilike("%GDACS%")
+            ))
+            found_news = res.scalars().first()
+            if found_news:
+                return found_news.id
+
+        # 5. Create new distinct source
+        new_id = s_uuid or uuid.uuid4()
         new_src = Source(
-            name=f"{st_clean.replace('_', ' ').title()} Stream",
+            id=new_id,
+            name=default_name,
             source_type=db_source_type,
             connector_class=f"{st_clean}Connector",
-            trust_score=0.85 if db_source_type in (SourceType.GOVERNMENT_API.value, SourceType.GOVERNMENT_DATASET.value) else 0.60,
+            trust_score=0.85 if db_source_type in (SourceType.GOVERNMENT_API.value, SourceType.GOVERNMENT_DATASET.value) else 0.70,
             is_active=True,
             is_demo=is_demo,
         )

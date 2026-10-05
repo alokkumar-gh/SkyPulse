@@ -38,7 +38,9 @@ INDIAN_CITIES_REFERENCE: Dict[str, Dict[str, Any]] = {
     "indore": {"city": "Indore", "district": "Indore", "state": "Madhya Pradesh", "lat": 22.7196, "lon": 75.8577},
     "patna": {"city": "Patna", "district": "Patna", "state": "Bihar", "lat": 25.5941, "lon": 85.1376},
     "guwahati": {"city": "Guwahati", "district": "Kamrup Metropolitan", "state": "Assam", "lat": 26.1445, "lon": 91.7362},
-    "bhubaneswar": {"city": "Bhubaneswar", "district": "Khurda", "state": "Odisha", "lat": 20.2961, "lon": 85.8245},
+    "bhubaneswar": {"city": "Bhubaneswar", "district": "Khordha", "state": "Odisha", "lat": 20.2961, "lon": 85.8245},
+    "cuttack": {"city": "Cuttack", "district": "Cuttack", "state": "Odisha", "lat": 20.4625, "lon": 85.8828},
+    "khordha": {"city": "Khordha", "district": "Khordha", "state": "Odisha", "lat": 20.1818, "lon": 85.6200},
     "puri": {"city": "Puri", "district": "Puri", "state": "Odisha", "lat": 19.8135, "lon": 85.8312},
     "shimla": {"city": "Shimla", "district": "Shimla", "state": "Himachal Pradesh", "lat": 31.1048, "lon": 77.1734},
     "srinagar": {"city": "Srinagar", "district": "Srinagar", "state": "Jammu & Kashmir", "lat": 34.0837, "lon": 74.7973},
@@ -51,6 +53,22 @@ INDIAN_CITIES_REFERENCE: Dict[str, Dict[str, Any]] = {
     "raipur": {"city": "Raipur", "district": "Raipur", "state": "Chhattisgarh", "lat": 21.2514, "lon": 81.6296},
     "panaji": {"city": "Panaji", "district": "North Goa", "state": "Goa", "lat": 15.4909, "lon": 73.8278},
 }
+
+# Dynamically augment reference with the authoritative nationwide district catalog
+try:
+    from connectors.weather_discovery.india_locations import INDIA_DISTRICTS as _AUTH_DISTRICTS
+    for _d in _AUTH_DISTRICTS:
+        _dname = _d["district"].lower().strip()
+        if _dname not in INDIAN_CITIES_REFERENCE:
+            INDIAN_CITIES_REFERENCE[_dname] = {
+                "city": _d.get("city") or _d["district"],
+                "district": _d["district"],
+                "state": _d["state"],
+                "lat": _d["lat"],
+                "lon": _d["lon"],
+            }
+except Exception:
+    pass
 
 
 INDIAN_STATES_REFERENCE: Dict[str, str] = {
@@ -77,6 +95,7 @@ INDIAN_STATES_REFERENCE: Dict[str, str] = {
     "jammu": "Jammu & Kashmir",
     "kashmir": "Jammu & Kashmir",
     "jammu & kashmir": "Jammu & Kashmir",
+    "jammu and kashmir": "Jammu & Kashmir",
     "jharkhand": "Jharkhand",
     "chhattisgarh": "Chhattisgarh",
     "goa": "Goa",
@@ -89,6 +108,17 @@ INDIAN_STATES_REFERENCE: Dict[str, str] = {
     "arunachal pradesh": "Arunachal Pradesh",
     "sikkim": "Sikkim",
     "ladakh": "Ladakh",
+    # Union Territories
+    "andaman & nicobar": "Andaman & Nicobar Islands",
+    "andaman & nicobar islands": "Andaman & Nicobar Islands",
+    "andaman and nicobar": "Andaman & Nicobar Islands",
+    "chandigarh": "Chandigarh",
+    "dadra & nagar haveli and daman & diu": "Dadra & Nagar Haveli and Daman & Diu",
+    "dadra and nagar haveli": "Dadra & Nagar Haveli and Daman & Diu",
+    "daman and diu": "Dadra & Nagar Haveli and Daman & Diu",
+    "lakshadweep": "Lakshadweep",
+    "puducherry": "Puducherry",
+    "pondicherry": "Puducherry",
 }
 
 
@@ -113,27 +143,27 @@ def normalize_category(raw_category: Optional[str], text: Optional[str] = None) 
     if candidate in valid_categories:
         return candidate
 
-    # Look for obvious unambiguous keywords in raw_category or text
+    # Look for obvious unambiguous keywords in raw_category or text (English and Indic scripts)
     combined = f"{candidate} {text or ''}".lower()
-    if any(w in combined for w in ["cyclone", "super cyclone", "typhoon"]):
+    if any(w in combined for w in ["cyclone", "super cyclone", "typhoon", "ଘୂର୍ଣ୍ଣିବାତ", "ବାତ୍ୟା", "तूफान", "चक्रवात", "புயல்", "ঘূর্ণিঝড়", "తుఫాను", "ചുഴലിക്കാറ്റ്"]):
         return WeatherCategory.CYCLONE.value
-    if any(w in combined for w in ["hail", "hailstorm"]):
+    if any(w in combined for w in ["hail", "hailstorm", "ओलावृष्टि", "শিলাবৃষ্টি"]):
         return WeatherCategory.HAILSTORM.value
-    if any(w in combined for w in ["flood", "flooding", "waterlogging", "waterlogged", "inundated", "submerged", "water level", "knee-deep"]):
+    if any(w in combined for w in ["flood", "flooding", "waterlogging", "waterlogged", "inundated", "submerged", "water level", "knee-deep", "बाढ़", "বন্যা", "ଜଳମଗ୍ନ", "வெள்ளம்", "వరదలు", "വെള്ളപ്പൊക്കം", "হੜ੍ਹ"]):
         return WeatherCategory.FLOODING.value
-    if any(w in combined for w in ["thunderstorm", "lightning"]):
+    if any(w in combined for w in ["thunderstorm", "lightning", "बिजली", "বজ্রবিদ্যুৎ", "ঝড়", "ଘଡ଼ଘଡ଼ି", "இடி மின்னல்", "ఉరుములు"]):
         return WeatherCategory.THUNDERSTORM.value
-    if any(w in combined for w in ["heavy rain", "downpour", "rainfall", "rain", "monsoon"]):
+    if any(w in combined for w in ["heavy rain", "downpour", "rainfall", "rain", "monsoon", "बारिश", "বৃষ্টিপাত", "বৃষ্টি", "ବର୍ଷା", "மழை", "వర్షం", "വർഷ", "മഴ", "पाऊस", "વરસાદ", "বৰষুণ"]):
         return WeatherCategory.RAINFALL.value
-    if any(w in combined for w in ["heatwave", "heat wave", "extreme heat", "loo"]):
+    if any(w in combined for w in ["heatwave", "heat wave", "extreme heat", "loo", "लू", "तापप्रवाह", "ଗ୍ରୀଷ୍ମପ୍ରବାହ", "அனல் காற்று"]):
         return WeatherCategory.HEATWAVE.value
-    if any(w in combined for w in ["dense fog", "fog"]):
+    if any(w in combined for w in ["dense fog", "fog", "कोहरा", "কুয়াশা", "କୁହୁଡ଼ି", "பனிமூட்டம்"]):
         return WeatherCategory.FOG.value
-    if any(w in combined for w in ["dust storm", "andhi", "sandstorm"]):
+    if any(w in combined for w in ["dust storm", "andhi", "sandstorm", "आंधी"]):
         return WeatherCategory.DUST_STORM.value
     if any(w in combined for w in ["strong winds", "gale", "squall"]):
         return WeatherCategory.STRONG_WINDS.value
-    if any(w in combined for w in ["snowfall", "snow"]):
+    if any(w in combined for w in ["snowfall", "snow", "बर्फबारी"]):
         return WeatherCategory.SNOWFALL.value
     if any(w in combined for w in ["smog", "air pollution"]):
         return WeatherCategory.SMOG.value
@@ -148,6 +178,7 @@ def enrich_location(
     district: Optional[str] = None,
     state: Optional[str] = None,
     text: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> Tuple[Optional[float], Optional[float], Optional[str], Optional[str], Optional[str], str, str, bool, bool, Optional[str]]:
     """
     Resolves and enriches location within India boundaries.
@@ -180,33 +211,56 @@ def enrich_location(
         except (ValueError, TypeError):
             pass
 
-    # 2. Priority 2 & 3: Structured Metadata & Explicit City / District / State
+    # 2. Priority 2, 3 & 4: Deterministic Location Resolver on Text & Metadata (Sections 5, 6, 7, 8, 9, 10)
+    try:
+        from connectors.weather_discovery.india_locations import resolve_article_locations
+        loc_res = resolve_article_locations(
+            title=title or "",
+            text=text or "",
+            metadata={"city": city, "district": district, "state": state},
+        )
+        if loc_res["primary_district"]:
+            return (
+                loc_res["latitude"],
+                loc_res["longitude"],
+                loc_res["primary_city"],
+                loc_res["primary_district"],
+                loc_res["primary_state"],
+                loc_res["resolution_method"],
+                "HIGH" if loc_res["primary_city"] else "MEDIUM",
+                True,
+                False,
+                None,
+            )
+        elif loc_res["primary_state"]:
+            # State-level representation: use state centroid for map markers (Section 22)
+            # Never invent a fake city or district (Section 5)
+            return (
+                loc_res["latitude"],
+                loc_res["longitude"],
+                None,
+                None,
+                loc_res["primary_state"],
+                loc_res["resolution_method"],
+                "MEDIUM",
+                True,
+                False,
+                None,
+            )
+    except Exception:
+        pass
+
+    # 3. Fallback: Direct lookup in reference tables
     if city:
         city_clean = city.strip().lower()
         if city_clean in INDIAN_CITIES_REFERENCE:
             ref = INDIAN_CITIES_REFERENCE[city_clean]
-            return None, None, ref["city"], ref["district"], ref["state"], "METADATA", "MEDIUM", True, False, None
+            return ref.get("lat"), ref.get("lon"), ref["city"], ref["district"], ref["state"], "METADATA", "MEDIUM", True, False, None
 
     if state:
         state_clean = state.strip().lower()
         if state_clean in INDIAN_STATES_REFERENCE:
             return None, None, city, district, INDIAN_STATES_REFERENCE[state_clean], "METADATA", "MEDIUM", True, False, None
-
-    # 3. Priority 4: Recognized Indian Place-Name match in Text
-    if text:
-        text_lower = text.lower()
-        # Check city matches
-        for ref_key, ref in INDIAN_CITIES_REFERENCE.items():
-            # word boundary match or hashtag match (e.g. #mumbairain, #mumbai, mumbai)
-            pattern = r"(?:#|\b)" + re.escape(ref_key) + r"(?:rain|weather|alert|\b)"
-            if re.search(pattern, text_lower):
-                return None, None, ref["city"], ref["district"], ref["state"], "TEXT", "MEDIUM", True, False, None
-
-        # Check state matches
-        for st_key, st_name in INDIAN_STATES_REFERENCE.items():
-            pattern = r"(?:#|\b)" + re.escape(st_key) + r"(?:rain|weather|alert|\b)"
-            if re.search(pattern, text_lower):
-                return None, None, None, None, st_name, "TEXT", "MEDIUM", True, False, None
 
     # 4. Priority 5: Otherwise UNKNOWN
     return None, None, None, None, None, "UNKNOWN", "LOW", False, True, "UNKNOWN_LOCATION"
@@ -227,6 +281,7 @@ async def normalize_raw_event(event: CanonicalRawEvent) -> NormalizedEvent:
     severity = event.severity if event.severity in (1, 2, 3, 4) else 2
 
     # 4. Location enrichment
+    raw_title = (event.raw_payload or {}).get("title") or ""
     lat, lon, city, district, state, loc_source, loc_conf, is_india, is_quar, quar_reason = enrich_location(
         lat=event.latitude,
         lon=event.longitude,
@@ -234,6 +289,7 @@ async def normalize_raw_event(event: CanonicalRawEvent) -> NormalizedEvent:
         district=event.district,
         state=event.state,
         text=clean_text,
+        title=raw_title,
     )
 
     # 5. Idempotency key
@@ -251,6 +307,11 @@ async def normalize_raw_event(event: CanonicalRawEvent) -> NormalizedEvent:
     year = event.observed_at.year if event.observed_at else datetime.now(timezone.utc).year
     rand_seq = random.randint(100000, 999999)
     tracking_id = f"SP-{year}-{rand_seq}"
+
+    raw_p = event.raw_payload or {}
+    aff_dists = raw_p.get("affected_districts") or ([district] if district else [])
+    aff_count = raw_p.get("affected_district_count") or len(aff_dists)
+    aff_states = raw_p.get("affected_states") or ([state] if state else [])
 
     return NormalizedEvent(
         ingestion_id=event.ingestion_id,
@@ -274,7 +335,16 @@ async def normalize_raw_event(event: CanonicalRawEvent) -> NormalizedEvent:
         observed_at=event.observed_at,
         ingested_at=event.ingested_at,
         media=event.media,
-        metadata={"raw_payload": event.raw_payload},
+        metadata={
+            "raw_payload": event.raw_payload,
+            "title": raw_title,
+            "publisher": raw_p.get("publisher"),
+            "source_published_at": event.observed_at.isoformat() if event.observed_at else None,
+            "location_resolution": loc_source,
+            "affected_districts": aff_dists,
+            "affected_district_count": aff_count,
+            "affected_states": aff_states,
+        },
         is_demo=event.is_demo,
         is_duplicate=is_duplicate,
         idempotency_key=key,

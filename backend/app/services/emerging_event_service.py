@@ -168,6 +168,28 @@ class EmergingEventService:
         result = await db.execute(query)
         reports = list(result.scalars().all())
 
+        if not reports and not start_time:
+            time_from_24h = time_to - timedelta(hours=24)
+            query_24h = (
+                select(WeatherReport)
+                .options(selectinload(WeatherReport.source))
+                .where(
+                    and_(
+                        WeatherReport.ingested_at >= time_from_24h,
+                        WeatherReport.ingested_at <= time_to,
+                        WeatherReport.location_lat.isnot(None),
+                        WeatherReport.location_lon.isnot(None),
+                    )
+                )
+                .order_by(desc(WeatherReport.ingested_at))
+            )
+            if category:
+                query_24h = query_24h.where(WeatherReport.primary_category == category.upper())
+            if state:
+                query_24h = query_24h.where(func.lower(WeatherReport.location_state) == state.strip().lower())
+            res_24h = await db.execute(query_24h)
+            reports = list(res_24h.scalars().all())
+
         if not reports:
             return []
 

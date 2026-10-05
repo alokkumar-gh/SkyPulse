@@ -73,6 +73,11 @@ class GroqMeasurements(BaseModel):
 class GroqWeatherClassification(BaseModel):
     is_weather_related: bool = True
     category: str
+    phenomenon: Optional[str] = "RAINFALL_OBSERVED"  # RAINFALL_DEFICIT, RAINFALL_EXCESS, NO_RAIN, DRY_SPELL, HEAVY_RAINFALL, etc.
+    event_nature: str = "OBSERVATION"                # ANOMALY, OBSERVATION, WARNING, FORECAST, RETROSPECTIVE
+    temporal_scope: str = "CURRENT"                  # CURRENT, DAILY, WEEKLY, MONTHLY, SEASONAL, HISTORICAL
+    is_current_observation: bool = True
+    evidence_basis: str = "CURRENT_OBSERVATION"      # CURRENT_OBSERVATION, OFFICIAL_WARNING, RAINFALL_ANOMALY, FORECAST, NEWS_REPORT, CITIZEN_REPORT, STATION_TELEMETRY
     severity: int = Field(default=2, ge=1, le=5)
     confidence: float = Field(default=0.75, ge=0.0, le=1.0)
     location: GroqLocation = Field(default_factory=GroqLocation)
@@ -89,6 +94,9 @@ class GroqWeatherClassification(BaseModel):
                     obj["location"] = locs[0]
                 elif isinstance(locs, dict):
                     obj["location"] = locs
+            # Support hazard_category field alias
+            if "category" not in obj and "hazard_category" in obj:
+                obj["category"] = obj["hazard_category"]
         return super().model_validate(obj, **kwargs)
 
     @field_validator("location", mode="before")
@@ -205,9 +213,9 @@ class GroqProvider(AIProvider):
     SYSTEM_PROMPT = """You are SkyPulse Weather Intelligence AI, an expert meteorological reasoning agent for India.
 Your mission is to analyze unstructured weather reports from social media, news, citizen reports, and sensors.
 
-STRICT INSTRUCTIONS:
-1. Classify the report into EXACTLY one of these SIH categories:
-   - RAIN (or RAINFALL)
+STRICT SEMANTIC & METEOROLOGICAL RULES:
+1. Classify the report into EXACTLY one SIH hazard category:
+   - RAINFALL (or RAIN)
    - THUNDERSTORM
    - FLOODING
    - HEATWAVE
@@ -215,12 +223,30 @@ STRICT INSTRUCTIONS:
    - DUST_STORM
    - STRONG_WINDS
    - UNKNOWN (if non-weather or ambiguous)
-2. Severity must be an integer from 1 (minor) to 4 (extreme/disaster).
-3. Extract Indian location mentions: city, district, state.
-4. Extract only explicitly mentioned meteorological measurements (e.g. rainfall_mm, temperature_c, wind_speed_kmh, visibility_km, flood_depth_ft). Use null for missing measurements.
-5. NEVER fabricate or invent GPS coordinates (latitude/longitude). SkyPulse uses validated geographic grounding.
-6. NEVER predict future weather forecasts. You are analyzing reported observations and evidence.
-7. Return valid JSON adhering to the required schema."""
+
+2. Determine the PRECISE METEOROLOGICAL PHENOMENON / SUBTYPE:
+   - RAINFALL_DEFICIT: Source reports below-normal seasonal rainfall, rainfall shortage, shortfall, monsoon deficit, or negative rainfall departure (-X%).
+   - RAINFALL_EXCESS: Source reports above-normal seasonal rainfall, surplus, or excess rainfall (+X%).
+   - DRY_SPELL: Source reports extended period without rain or sub-normal conditions.
+   - NO_RAIN: Station or source explicitly reports zero rainfall (0 mm / no rain recorded).
+   - HEAVY_RAINFALL: Source reports heavy downpour, intense rainfall, or torrential rain.
+   - EXTREME_RAINFALL: Cloudburst or catastrophic deluge.
+   - RAINFALL_OBSERVED: General rain falling or recorded at the ground.
+   - URBAN_FLOOD / RIVERINE_FLOOD / FLASH_FLOOD for flooding events.
+
+3. HARD ANTI-HALLUCINATION RULES:
+   - IF SOURCE REPORTS RAINFALL DEFICIT / MONSOON DEFICIT:
+     Set phenomenon="RAINFALL_DEFICIT", event_nature="ANOMALY", temporal_scope="SEASONAL", is_current_observation=false, evidence_basis="RAINFALL_ANOMALY".
+     DO NOT claim rain is falling or that rainfall was detected/observed.
+   - IF SOURCE REPORTS A FORECAST / WARNING:
+     Set event_nature="FORECAST" or "WARNING", is_current_observation=false.
+   - IF SOURCE REPORTS HISTORICAL DATA:
+     Set event_nature="RETROSPECTIVE", temporal_scope="HISTORICAL", is_current_observation=false.
+
+4. Extract Indian location mentions: city, district, state.
+5. Extract explicit measurements (rainfall_mm, temperature_c, wind_speed_kmh, etc.). Use null if omitted.
+6. NEVER invent or fabricate GPS coordinates.
+7. Return valid JSON adhering to the schema."""
 
     def __init__(
         self,
@@ -343,10 +369,8 @@ STRICT INSTRUCTIONS:
 
                 elif resp.status_code == 429:
                     self.telemetry.record_failure("RATE_LIMIT_429")
-                    backoff = (2 ** attempt) * 0.75 + 0.25
-                    logger.warning("Groq rate limited (429). Backing off for %.2fs (attempt %d/%d)", backoff, attempt + 1, self.max_retries)
-                    await asyncio.sleep(backoff)
-                    continue
+                    logger.info("Groq rate limited (429). Falling back immediately to heuristic classification.")
+                    return None
 
                 else:
                     err_code = f"HTTP_{resp.status_code}"
@@ -441,9 +465,22 @@ STRICT INSTRUCTIONS:
             if parsed.reasoning:
                 signals.append(f"reasoning:{parsed.reasoning[:80]}")
 
+            phenom = parsed.phenomenon or (
+                "RAINFALL_DEFICIT" if "deficit" in (parsed.reasoning or "").lower()
+                else ("RAINFALL_EXCESS" if "excess" in (parsed.reasoning or "").lower()
+                else ("NO_RAIN" if "no rain" in (parsed.reasoning or "").lower()
+                else ("DRY_SPELL" if "dry spell" in (parsed.reasoning or "").lower()
+                else ("HEAVY_RAINFALL" if "heavy" in (parsed.reasoning or "").lower()
+                else ("RAINFALL_OBSERVED" if category == "RAINFALL" else category))))))
+
             result = ClassificationResult(
                 category=category,
-                sub_category=parsed.reasoning[:40] if parsed.reasoning else None,
+                sub_category=phenom,
+                phenomenon=phenom,
+                event_nature=parsed.event_nature or ("ANOMALY" if phenom in ("RAINFALL_DEFICIT", "RAINFALL_EXCESS", "DRY_SPELL") else "OBSERVATION"),
+                temporal_scope=parsed.temporal_scope or ("SEASONAL" if phenom in ("RAINFALL_DEFICIT", "RAINFALL_EXCESS") else "CURRENT"),
+                is_current_observation=parsed.is_current_observation if phenom not in ("RAINFALL_DEFICIT", "RAINFALL_EXCESS", "DRY_SPELL") else False,
+                evidence_basis=parsed.evidence_basis or ("RAINFALL_ANOMALY" if phenom in ("RAINFALL_DEFICIT", "RAINFALL_EXCESS", "DRY_SPELL") else "CURRENT_OBSERVATION"),
                 confidence=min(1.0, max(0.1, parsed.confidence)),
                 severity=min(4, max(1, parsed.severity)),
                 evidence_signals=signals,
@@ -627,6 +664,7 @@ STRICT INSTRUCTIONS:
         nearby_reports: Optional[List[Dict[str, Any]]] = None,
         source_trust: float = 0.5,
         media_analysis: Optional[MediaAnalysisResult] = None,
+        physical_observation: Optional[Dict[str, Any]] = None,
     ) -> EvidenceAssessmentResult:
         """
         Assesses evidence using multi-source corroboration matrix.
@@ -638,6 +676,7 @@ STRICT INSTRUCTIONS:
             nearby_reports=nearby_reports,
             source_trust=source_trust,
             media_analysis=media_analysis,
+            physical_observation=physical_observation,
         )
 
 

@@ -159,15 +159,53 @@ class DWEGService:
                 generated_at=datetime.now(timezone.utc),
             )
 
+        # Fetch reports text to extract semantic intelligence
+        ev_query = await db.execute(
+            select(EventEvidence).where(EventEvidence.canonical_event_id == e_uuid)
+        )
+        evidence_links = ev_query.scalars().all()
+
+        report_ids = [el.weather_report_id for el in evidence_links]
+        reports_map: Dict[uuid.UUID, WeatherReport] = {}
+        if report_ids:
+            rep_query = await db.execute(
+                select(WeatherReport)
+                .options(selectinload(WeatherReport.source))
+                .where(WeatherReport.id.in_(report_ids))
+            )
+            for r in rep_query.scalars().all():
+                reports_map[r.id] = r
+
+        raw_texts = [r.raw_content or r.normalized_text or "" for r in reports_map.values()]
+        from app.services.weather_intelligence_service import synthesize_semantic_event_intelligence
+        semantic_intel = synthesize_semantic_event_intelligence(
+            category=event.category,
+            sub_category=event.sub_category,
+            state=event.primary_state,
+            district=event.primary_district,
+            city=event.primary_city,
+            evidence_texts=raw_texts,
+            publishers=[],
+            evidence_count=len(evidence_links) or event.evidence_count,
+        )
+
         event_node_id = f"event_{event.id}"
         loc_label = event.primary_district or event.primary_city or event.primary_state or "India"
+        phenom_label = semantic_intel["phenomenon"].replace("_", " ").title()
+
         event_node = DWEGNode(
             id=event_node_id,
             type="WeatherEvent",
-            label=f"{event.category} ({loc_label})",
+            label=f"{phenom_label} ({loc_label})",
             properties={
                 "event_id": str(event.id),
                 "category": event.category,
+                "sub_category": semantic_intel["sub_category"],
+                "phenomenon": semantic_intel["phenomenon"],
+                "event_nature": semantic_intel["event_nature"],
+                "temporal_scope": semantic_intel["temporal_scope"],
+                "is_current_observation": semantic_intel["is_current_observation"],
+                "evidence_basis": semantic_intel["evidence_basis"],
                 "severity": event.severity,
                 "confidence": event.confidence_score,
                 "status": event.verification_status,
@@ -183,14 +221,14 @@ class DWEGService:
         )
         nodes.append(event_node)
 
-        # 2. Location Node
-        loc_key = f"loc_{(event.primary_district or event.primary_state or 'india').lower().replace(' ', '_')}"
+        # 2. Location Node (State / Primary Location)
+        loc_key = f"loc_{(event.primary_state or loc_label).lower().replace(' ', '_')}"
         loc_node = DWEGNode(
             id=loc_key,
             type="Location",
-            label=loc_label,
+            label=event.primary_state or loc_label,
             properties={
-                "name": loc_label,
+                "name": event.primary_state or loc_label,
                 "state": event.primary_state,
                 "district": event.primary_district,
                 "lat": event.centroid_lat,
@@ -198,31 +236,84 @@ class DWEGService:
             },
         )
         nodes.append(loc_node)
-        edges.append(
-            DWEGEdge(
-                source=event_node_id,
-                target=loc_key,
-                type="LOCATED_AT",
-                properties={"weight": 1.0},
+
+        # If deficit or multi-district mention, add intermediate district/scope node
+        if semantic_intel["phenomenon"] == "RAINFALL_DEFICIT" and any("21 districts" in t.lower() for t in raw_texts):
+            dist_scope_key = f"scope_21_districts_{(event.primary_state or 'india').lower()}"
+            dist_scope_node = DWEGNode(
+                id=dist_scope_key,
+                type="Location",
+                label="21 Districts (Deficit Scope)",
+                properties={
+                    "scope": "21 districts",
+                    "state": event.primary_state,
+                },
             )
-        )
+            nodes.append(dist_scope_node)
+            # Edge: Location -> Scope
+            edges.append(
+                DWEGEdge(
+                    source=loc_key,
+                    target=dist_scope_key,
+                    type="ENCOMPASSES",
+                    properties={"weight": 1.0},
+                )
+            )
+            # Edge: Event -> Scope
+            edges.append(
+                DWEGEdge(
+                    source=event_node_id,
+                    target=dist_scope_key,
+                    type="LOCATED_AT",
+                    properties={"weight": 1.0},
+                )
+            )
+        else:
+            edges.append(
+                DWEGEdge(
+                    source=event_node_id,
+                    target=loc_key,
+                    type="LOCATED_AT",
+                    properties={"weight": 1.0},
+                )
+            )
 
-        # 3. Fetch Evidence Reports
-        ev_query = await db.execute(
-            select(EventEvidence).where(EventEvidence.canonical_event_id == e_uuid)
-        )
-        evidence_links = ev_query.scalars().all()
+        # 3. Temporal / Climate Scope Node for Seasonal Anomalies
+        if semantic_intel["event_nature"] == "ANOMALY":
+            temporal_key = f"temporal_{semantic_intel['temporal_scope'].lower()}_{event.id}"
+            temporal_label = f"Seasonal / Monsoon ({semantic_intel['temporal_scope']})" if semantic_intel['temporal_scope'] == "SEASONAL" else f"{semantic_intel['temporal_scope'].title()} Anomaly"
+            temporal_node = DWEGNode(
+                id=temporal_key,
+                type="Location",
+                label=temporal_label,
+                properties={
+                    "temporal_scope": semantic_intel["temporal_scope"],
+                    "event_nature": semantic_intel["event_nature"],
+                },
+            )
+            nodes.append(temporal_node)
+            edges.append(
+                DWEGEdge(
+                    source=event_node_id,
+                    target=temporal_key,
+                    type="TEMPORAL_WINDOW",
+                    properties={"weight": 0.9},
+                )
+            )
 
-        report_ids = [el.weather_report_id for el in evidence_links]
+        # 4. Weather Reports
+        report_ids = [e.report_id for e in ev_records if e.report_id]
         reports_map: Dict[uuid.UUID, WeatherReport] = {}
         if report_ids:
             rep_query = await db.execute(
-                select(WeatherReport).where(WeatherReport.id.in_(report_ids))
+                select(WeatherReport)
+                .options(selectinload(WeatherReport.source))
+                .where(WeatherReport.id.in_(report_ids))
             )
             for r in rep_query.scalars().all():
                 reports_map[r.id] = r
 
-        # 4. Sources map
+        # 5. Sources map
         source_ids = [r.source_id for r in reports_map.values() if r.source_id]
         sources_map: Dict[uuid.UUID, Source] = {}
         if source_ids:
@@ -383,14 +474,22 @@ class DWEGService:
 
     async def _sync_to_neo4j(self, nodes: List[DWEGNode], edges: List[DWEGEdge]) -> None:
         """Pushes nodes and relationships into Neo4j if driver is connected."""
+        if not getattr(settings, "NEO4J_ENABLED", True):
+            return
+
+        import time
+        from app.db.neo4j_session import dweg_metrics
+        t0 = time.perf_counter()
         try:
             driver = get_neo4j_driver()
-            async with driver.session() as session:
+            db_name = getattr(settings, "NEO4J_DATABASE", "neo4j")
+            async with driver.session(database=db_name) as session:
                 # Merge nodes
                 for node in nodes:
                     label = node.type
                     query = f"MERGE (n:{label} {{id: $id}}) SET n += $props"
                     await session.run(query, id=node.id, props=node.properties)
+                dweg_metrics["nodes_projected_total"] += len(nodes)
 
                 # Merge edges
                 for edge in edges:
@@ -401,7 +500,12 @@ class DWEGService:
                         f"SET r += $props"
                     )
                     await session.run(query, source=edge.source, target=edge.target, props=edge.properties)
+                dweg_metrics["edges_projected_total"] += len(edges)
+
+            dweg_metrics["last_sync_latency_ms"] = round((time.perf_counter() - t0) * 1000, 2)
         except Exception as exc:
+            dweg_metrics["sync_errors_total"] += 1
+            dweg_metrics["fallback_activations_total"] += 1
             logger.debug("Neo4j background sync bypassed (offline/unreachable): %s", exc)
 
     async def get_event_graph_in_memory(self, event_id: str) -> DWEGGraphResponse:
@@ -628,7 +732,9 @@ class DWEGService:
 
         if rep_ids:
             rep_query = await db.execute(
-                select(WeatherReport).where(WeatherReport.id.in_(rep_ids))
+                select(WeatherReport)
+                .options(selectinload(WeatherReport.source))
+                .where(WeatherReport.id.in_(rep_ids))
             )
             reports = rep_query.scalars().all()
             links_map = {l.weather_report_id: l for l in links}

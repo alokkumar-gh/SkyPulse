@@ -21,9 +21,13 @@ NOTE: Explicitly a controlled integration sanity test, NOT a production-scale be
 
 import asyncio
 import time
+import sys
+import os
 import uuid
 import random
 from datetime import datetime, timezone, timedelta
+
+sys.path.insert(0, r"e:\SkyPulse\backend")
 
 from app.db.session import AsyncSessionLocal
 from app.models.source import Source
@@ -123,20 +127,21 @@ async def run_scale_sanity_test(num_events: int = 100):
     categories_count = {}
     latencies = []
 
-    async with AsyncSessionLocal() as session:
-        # Pre-resolve test source
-        src_res = await session.execute(select(Source).where(Source.source_type == SourceType.WEATHER_API.value))
-        src = src_res.scalars().first()
-        src_id = str(src.id) if src else str(uuid.uuid4())
-
-        for idx, ev in enumerate(events):
+    for idx, ev in enumerate(events):
+        async with AsyncSessionLocal() as session:
+            # Pre-resolve test source
+            src_res = await session.execute(select(Source).where(Source.source_type == SourceType.WEATHER_API.value))
+            src = src_res.scalars().first()
+            src_id = str(src.id) if src else str(uuid.uuid4())
             ev.source_id = src_id
+
             ev_t0 = time.perf_counter()
             try:
                 res = await unified_ingestion_pipeline.ingest_canonical_event(
                     raw_event=ev,
                     db=session,
                 )
+                await session.commit()
                 ev_t1 = time.perf_counter()
                 latencies.append((ev_t1 - ev_t0) * 1000.0)
 
@@ -154,8 +159,8 @@ async def run_scale_sanity_test(num_events: int = 100):
                 failures += 1
                 print(f"Event {idx} processing exception: {e}")
 
-            if (idx + 1) % 25 == 0 or (idx + 1) == num_events:
-                print(f"  Processed {idx + 1}/{num_events} events... (Elapsed: {time.perf_counter() - t0:.2f}s)", flush=True)
+            if (idx + 1) % 5 == 0 or (idx + 1) == num_events:
+                print(f"  Processed {idx + 1}/{num_events} events... (Avg: {sum(latencies)/len(latencies):.1f}ms, Elapsed: {time.perf_counter() - t0:.2f}s)", flush=True)
 
 
     t1 = time.perf_counter()
@@ -183,4 +188,4 @@ async def run_scale_sanity_test(num_events: int = 100):
 
 
 if __name__ == "__main__":
-    asyncio.run(run_scale_sanity_test(100))
+    asyncio.run(run_scale_sanity_test(25))

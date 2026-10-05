@@ -6,7 +6,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, get_optional_current_user
 from app.core.audit import log_audit_event
 from app.models.user import User
 from app.models.source import Source, SourceReputationHistory, ConnectorHealth
@@ -59,7 +59,7 @@ async def list_sources_reputation(
     min_trust: Optional[float] = Query(None, description="Minimum current trust score (0.0 - 1.0)"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.PUBLIC, UserRole.CITIZEN, UserRole.ANALYST, UserRole.ADMIN, UserRole.GOVERNMENT)),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     List historical evidence-driven source reputation profiles across registered sources.
@@ -75,8 +75,8 @@ async def list_sources_reputation(
         category=category,
     )
 
-    # Privacy filter: for public/citizen users, redact internal connector details
-    if current_user.role in (UserRole.PUBLIC.value, UserRole.CITIZEN.value):
+    # Privacy filter: for unauthenticated or public/citizen users, redact internal citizen IDs
+    if not current_user or current_user.role in (UserRole.PUBLIC.value, UserRole.CITIZEN.value):
         for item in items:
             if item.source_type == SourceType.CITIZEN.value:
                 item.source_name = f"Citizen Contributor #{item.source_id[:6]}"
@@ -91,7 +91,7 @@ async def list_sources_reputation(
 async def get_source_reputation(
     source_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.PUBLIC, UserRole.CITIZEN, UserRole.ANALYST, UserRole.ADMIN, UserRole.GOVERNMENT)),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     Get the complete evidence-driven reputation profile and 9-factor decomposition for a specific source.
@@ -108,7 +108,7 @@ async def get_source_reputation(
         )
 
     # Privacy filtering
-    if current_user.role in (UserRole.PUBLIC.value, UserRole.CITIZEN.value) and profile.source_type == SourceType.CITIZEN.value:
+    if (not current_user or current_user.role in (UserRole.PUBLIC.value, UserRole.CITIZEN.value)) and profile.source_type == SourceType.CITIZEN.value:
         profile.source_name = f"Citizen Contributor #{profile.source_id[:6]}"
 
     return profile
@@ -118,7 +118,7 @@ async def get_source_reputation(
 async def get_source_reputation_timeline(
     source_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.PUBLIC, UserRole.CITIZEN, UserRole.ANALYST, UserRole.ADMIN, UserRole.GOVERNMENT)),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     Retrieve the chronological reputation and verification milestone timeline for a source.
@@ -140,7 +140,7 @@ async def get_source_reputation_timeline(
 async def get_source_reputation_categories(
     source_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.PUBLIC, UserRole.CITIZEN, UserRole.ANALYST, UserRole.ADMIN, UserRole.GOVERNMENT)),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     Retrieve category-specific reliability breakdowns for a source (e.g. RAINFALL vs FOG vs THUNDERSTORM).

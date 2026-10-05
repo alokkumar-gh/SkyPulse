@@ -89,6 +89,9 @@ class SourcePerformanceMetrics(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+from connectors.schema import CommonConnectorHealthReport
+
+
 class UnifiedSourceStatusResponse(BaseModel):
     connector_id: str
     display_name: str
@@ -102,11 +105,13 @@ class UnifiedSourceStatusResponse(BaseModel):
     last_success_at: Optional[datetime] = None
     last_error_at: Optional[datetime] = None
     current_error: Optional[str] = None
+    common_health: Optional[CommonConnectorHealthReport] = None
     stage_telemetry: PipelineStageTelemetry
     performance: SourcePerformanceMetrics
     recent_runs: List[IngestionRunResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class SourceFamilySummaryItem(BaseModel):

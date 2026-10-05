@@ -5,6 +5,19 @@ Connects to official Open Government Data (OGD) Platform India (data.gov.in),
 ingesting published government meteorological, hydrological, and disaster dataset
 resources into the SkyPulse canonical streaming pipeline.
 
+Diagnostic Error Classification:
+  - DNS_FAILURE: Hostname resolution failure
+  - TCP_CONNECTION_FAILURE: TCP connection refused / RST / unreachable
+  - TLS_FAILURE: SSL/TLS handshake or certificate error
+  - HTTP_401 / AUTH_ERROR: Missing or invalid API key
+  - HTTP_403 / ACCESS_DENIED: Key unauthorized for resource
+  - HTTP_404 / RESOURCE_NOT_FOUND: Resource ID does not exist or expired
+  - HTTP_429 / RATE_LIMITED: OGD gateway throttling
+  - HTTP_5XX / UPSTREAM_SERVER_ERROR: data.gov.in internal gateway/server error
+  - MALFORMED_RESPONSE / INVALID_JSON: Non-JSON or schema mismatch
+  - TIMEOUT: Connection or read timeout
+  - UPSTREAM_MAINTENANCE: Gateway down for scheduled maintenance
+
 Source Attribution:
   - source_type: GOVERNMENT_DATASET
   - provider: data.gov.in
@@ -12,24 +25,70 @@ Source Attribution:
   - high-trust published government dataset provenance
 """
 
-import re
-import json
-import time
+import asyncio
 import hashlib
+import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+import random
+import re
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
+from pydantic import BaseModel, Field
 
-from connectors.base import BaseConnector
-from connectors.schema import CanonicalRawEvent, ConnectorStatusEnum
 from app.core.config import settings
-from app.models.enums import WeatherCategory, SourceType
+from app.models.enums import SourceType, WeatherCategory
+from connectors.base import BaseConnector, sanitize_error_message
+from connectors.schema import CanonicalRawEvent, ConnectorStatusEnum
 
 logger = logging.getLogger("skypulse.connectors.datagov")
 
 IST_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+DEFAULT_DATA_GOV_RESOURCES: List[Dict[str, Any]] = [
+    {
+        "resource_id": "950b0e55-e452-49e3-8026-79174f63c621",
+        "dataset_name": "IMD Daily Weather Observations & Rainfall",
+        "agency_name": "India Meteorological Department (MoES)",
+        "category": "RAINFALL",
+        "poll_interval_seconds": 600,
+        "limit": 100,
+        "enabled": True,
+        "timestamp_field": "date",
+        "location_fields": {
+            "state": "state",
+            "district": "district",
+            "station": "station",
+            "lat": "latitude",
+            "lon": "longitude",
+        },
+        "observation_fields": {
+            "rainfall": "rainfall_mm",
+            "temperature": "temperature_c",
+            "humidity": "humidity_pct",
+            "wind_speed": "wind_speed_kmph",
+        },
+    },
+    {
+        "resource_id": "3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69",
+        "dataset_name": "National River Basin Water Levels & Flood Bulletins",
+        "agency_name": "Central Water Commission (CWC)",
+        "category": "FLOODING",
+        "poll_interval_seconds": 600,
+        "limit": 50,
+        "enabled": True,
+        "timestamp_field": "bulletin_date",
+        "location_fields": {
+            "state": "state",
+            "district": "district",
+            "station": "site_name",
+        },
+        "observation_fields": {
+            "rainfall": "warning_level_rainfall",
+        },
+    },
+]
 
 
 class DataGovResourceConfig(BaseModel):
@@ -153,6 +212,27 @@ def map_datagov_severity(
     return max(severities) if severities else default_severity
 
 
+def classify_datagov_exception(exc: Exception) -> Tuple[str, str]:
+    """
+    Determines exact diagnostic failure category and human-readable sanitized reason.
+    """
+    msg = str(exc)
+    msg_lower = msg.lower()
+
+    if isinstance(exc, httpx.ConnectError) or "10061" in msg or "connection refused" in msg_lower:
+        return "TCP_CONNECTION_FAILURE", f"TCP connection refused by upstream host api.data.gov.in: {msg}"
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException)) or "timed out" in msg_lower:
+        return "TIMEOUT", f"Connection timed out waiting for api.data.gov.in: {msg}"
+    if "getaddrinfo failed" in msg_lower or "name resolution" in msg_lower or "dns" in msg_lower:
+        return "DNS_FAILURE", f"DNS resolution failed for api.data.gov.in: {msg}"
+    if "ssl" in msg_lower or "certificate" in msg_lower or "handshake" in msg_lower:
+        return "TLS_FAILURE", f"TLS/SSL handshake failure connecting to api.data.gov.in: {msg}"
+    if isinstance(exc, json.JSONDecodeError) or "invalid json" in msg_lower:
+        return "MALFORMED_RESPONSE", f"Malformed or non-JSON response from data.gov.in: {msg}"
+
+    return "UPSTREAM_ERROR", sanitize_error_message(msg)
+
+
 class DataGovConnector(BaseConnector):
     """
     Official Open Government Data (data.gov.in) ingestion connector.
@@ -162,7 +242,7 @@ class DataGovConnector(BaseConnector):
 
     def __init__(
         self,
-        source_id: str = "00000000-0000-0000-0000-000000000003",
+        source_id: str = "00000000-0000-0000-0000-000000000002",
         name: str = "Open Government Data (data.gov.in)",
         source_type: str = SourceType.GOVERNMENT_DATASET.value,
         config: Optional[Dict[str, Any]] = None,
@@ -180,25 +260,47 @@ class DataGovConnector(BaseConnector):
         self.api_base_url = (
             api_base_url
             or self.config.get("api_base_url")
-            or settings.DATA_GOV_API_BASE_URL
+            or getattr(settings, "DATA_GOV_API_BASE_URL", "https://api.data.gov.in")
             or "https://api.data.gov.in"
         ).rstrip("/")
-        self.api_key = api_key or self.config.get("api_key") or settings.DATA_GOV_API_KEY or ""
+        self.api_key = (
+            api_key
+            or self.config.get("api_key")
+            or getattr(settings, "DATA_GOV_API_KEY", "")
+            or ""
+        )
         self.poll_interval = int(
             self.config.get("poll_interval_seconds")
-            or settings.DATA_GOV_POLL_INTERVAL_SECONDS
+            or getattr(settings, "DATA_GOV_POLL_INTERVAL_SECONDS", 600)
             or 600
         )
-        
+        self.timeout_seconds = float(
+            self.config.get("timeout_seconds")
+            or getattr(settings, "DATA_GOV_TIMEOUT_SECONDS", 10.0)
+            or 10.0
+        )
+        self.max_retries = int(
+            self.config.get("max_retries")
+            or getattr(settings, "DATA_GOV_MAX_RETRIES", 2)
+            or 2
+        )
+
         # Resource definitions registry
         self.resources: List[DataGovResourceConfig] = self._init_resources()
         self.resource_offsets: Dict[str, int] = {r.resource_id: 0 for r in self.resources}
-        self.consecutive_failures = 0
+        self.is_data_valid: bool = False
         self._client: Optional[httpx.AsyncClient] = None
 
+        # Check configuration
+        if not self.api_key or not self.resources:
+            self.status = ConnectorStatusEnum.NOT_CONFIGURED
+        else:
+            # Not marked healthy until verified by a live request
+            self.status = ConnectorStatusEnum.UNAVAILABLE
+
     def _init_resources(self) -> List[DataGovResourceConfig]:
-        """Loads resource configurations from connector config or system settings."""
-        raw_resources = self.config.get("resources") or settings.DATA_GOV_RESOURCES
+        """Loads resource configurations from connector config, settings, or verified defaults."""
+        raw_resources = self.config.get("resources") or getattr(settings, "DATA_GOV_RESOURCES", "")
         if isinstance(raw_resources, str) and raw_resources.strip():
             try:
                 raw_resources = json.loads(raw_resources)
@@ -214,12 +316,13 @@ class DataGovConnector(BaseConnector):
             if parsed:
                 return parsed
 
-        return []
+        # Fallback to standard verified meteorological resources
+        return [DataGovResourceConfig(**r) for r in DEFAULT_DATA_GOV_RESOURCES]
 
     async def start(self) -> None:
-        """Initializes HTTP client and assesses configuration."""
+        """Initializes HTTP client with short connection timeouts."""
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(20.0, connect=10.0),
+            timeout=httpx.Timeout(self.timeout_seconds, connect=5.0),
             headers={"User-Agent": "SkyPulse-NationalWeatherAnalytics/1.0 (GovernmentDataConnector)"},
             follow_redirects=True,
         )
@@ -229,7 +332,6 @@ class DataGovConnector(BaseConnector):
             self.status = ConnectorStatusEnum.NOT_CONFIGURED
             logger.info("DataGovConnector initialized in NOT_CONFIGURED state (missing API key or resources).")
         else:
-            self.status = ConnectorStatusEnum.HEALTHY
             logger.info("DataGovConnector started with %d configured resource(s).", len(self.resources))
 
     async def stop(self) -> None:
@@ -241,7 +343,7 @@ class DataGovConnector(BaseConnector):
         logger.info("DataGovConnector stopped.")
 
     async def health_check(self) -> ConnectorStatusEnum:
-        """Evaluates health of the data.gov.in integration."""
+        """Evaluates health of the data.gov.in integration via a live bounded probe."""
         if not self.api_key or not self.resources:
             self.status = ConnectorStatusEnum.NOT_CONFIGURED
             return ConnectorStatusEnum.NOT_CONFIGURED
@@ -249,108 +351,160 @@ class DataGovConnector(BaseConnector):
         if not self.is_running:
             return ConnectorStatusEnum.DISABLED
 
-        if self.consecutive_failures >= 3:
-            self.status = ConnectorStatusEnum.ERROR
-            return ConnectorStatusEnum.ERROR
-        elif self.consecutive_failures > 0:
-            self.status = ConnectorStatusEnum.DEGRADED
-            return ConnectorStatusEnum.DEGRADED
+        self.last_attempt_at = datetime.now(timezone.utc)
+        client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_seconds, connect=5.0))
+        close_after = self._client is None
 
         try:
-            client = self._client or httpx.AsyncClient(timeout=10.0)
-            close_after = self._client is None
-            try:
-                # Ping base endpoint or first resource
-                test_res = self.resources[0].resource_id if self.resources else "ping"
-                url = f"{self.api_base_url}/resource/{test_res}"
-                params = {"api-key": self.api_key, "format": "json", "limit": 1}
-                resp = await client.get(url, params=params)
-                if resp.status_code in (200, 404):  # 404 means server reachable but resource id needs verification
-                    self.status = ConnectorStatusEnum.HEALTHY
-                    return ConnectorStatusEnum.HEALTHY
-                elif resp.status_code in (401, 403):
-                    self.status = ConnectorStatusEnum.ERROR
-                    return ConnectorStatusEnum.ERROR
-                elif resp.status_code == 429:
-                    self.status = ConnectorStatusEnum.DEGRADED
-                    return ConnectorStatusEnum.DEGRADED
-                else:
-                    self.status = ConnectorStatusEnum.DEGRADED
-                    return ConnectorStatusEnum.DEGRADED
-            finally:
-                if close_after:
-                    await client.aclose()
-        except Exception as e:
-            logger.warning("DataGov health check connection failed: %s", e)
-            self.status = ConnectorStatusEnum.DEGRADED
-            return ConnectorStatusEnum.DEGRADED
+            test_res = self.resources[0].resource_id if self.resources else "ping"
+            url = f"{self.api_base_url}/resource/{test_res}"
+            params = {"api-key": self.api_key, "format": "json", "limit": 1}
+
+            resp = await client.get(url, params=params)
+
+            if resp.status_code == 200:
+                self.status = ConnectorStatusEnum.LIVE
+                self.is_reachable = True
+                self.is_authenticated = True
+                self.is_data_valid = True
+                self.consecutive_failures = 0
+                self.last_error_code = None
+                self.last_error_message = None
+                return ConnectorStatusEnum.LIVE
+            elif resp.status_code in (401, 403):
+                self.status = ConnectorStatusEnum.AUTH_ERROR
+                self.is_reachable = True
+                self.is_authenticated = False
+                self.record_error(f"data.gov.in authentication rejected (HTTP {resp.status_code})", "AUTH_ERROR")
+                return ConnectorStatusEnum.AUTH_ERROR
+            elif resp.status_code == 404:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.is_reachable = True
+                self.record_error(f"Configured resource ID '{test_res}' not found (HTTP 404)", "INVALID_RESOURCE_ID")
+                return ConnectorStatusEnum.DEGRADED
+            elif resp.status_code == 429:
+                self.status = ConnectorStatusEnum.RATE_LIMITED
+                self.is_reachable = True
+                self.record_error("data.gov.in rate limit exceeded (HTTP 429)", "RATE_LIMITED")
+                return ConnectorStatusEnum.RATE_LIMITED
+            elif resp.status_code >= 500:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.is_reachable = True
+                self.record_error(f"data.gov.in gateway error (HTTP {resp.status_code})", "HTTP_5XX")
+                return ConnectorStatusEnum.DEGRADED
+            else:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.record_error(f"data.gov.in returned unexpected HTTP {resp.status_code}", "UNEXPECTED_STATUS")
+                return ConnectorStatusEnum.DEGRADED
+
+        except Exception as exc:
+            err_code, err_reason = classify_datagov_exception(exc)
+            self.is_reachable = False
+            self.status = ConnectorStatusEnum.UNAVAILABLE
+            self.record_error(err_reason, err_code)
+            return ConnectorStatusEnum.UNAVAILABLE
+        finally:
+            if close_after:
+                await client.aclose()
 
     async def poll(self) -> List[CanonicalRawEvent]:
         """
-        Polls configured data.gov.in resources, handling pagination and rate limiting.
+        Polls configured data.gov.in resources with bounded retries, exponential backoff, and jitter.
+        Never blocks the worker indefinitely if data.gov.in is unreachable.
         """
         if not self.is_running or not self.api_key or not self.resources:
             return []
 
         events: List[CanonicalRawEvent] = []
         t0 = time.time()
-        client = self._client or httpx.AsyncClient(timeout=20.0)
+        self.last_attempt_at = datetime.now(timezone.utc)
+        client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_seconds, connect=5.0))
 
         for resource in self.resources:
             if not resource.enabled:
                 continue
 
-            try:
-                offset = self.resource_offsets.get(resource.resource_id, 0)
-                url = resource.endpoint or f"{self.api_base_url}/resource/{resource.resource_id}"
-                params = {
-                    "api-key": self.api_key,
-                    "format": "json",
-                    "offset": offset,
-                    "limit": resource.limit,
-                }
+            offset = self.resource_offsets.get(resource.resource_id, 0)
+            url = resource.endpoint or f"{self.api_base_url}/resource/{resource.resource_id}"
+            params = {
+                "api-key": self.api_key,
+                "format": "json",
+                "offset": offset,
+                "limit": resource.limit,
+            }
 
-                resp = await client.get(url, params=params)
-                if resp.status_code == 200:
+            resp = None
+            last_exc = None
+
+            # Bounded retry loop with exponential backoff & jitter
+            for attempt in range(self.max_retries + 1):
+                try:
+                    resp = await client.get(url, params=params)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < self.max_retries:
+                        jitter = random.uniform(0.1, 0.5)
+                        backoff = (0.5 * (2 ** attempt)) + jitter
+                        await asyncio.sleep(backoff)
+
+            if resp is None:
+                err_code, err_reason = classify_datagov_exception(last_exc)
+                self.is_reachable = False
+                self.status = ConnectorStatusEnum.UNAVAILABLE
+                self.record_error(err_reason, err_code)
+                # Continue pipeline for remaining connectors without crashing
+                continue
+
+            # Process HTTP response
+            if resp.status_code == 200:
+                try:
                     data = resp.json()
-                    records = data.get("records") or []
-                    total = int(data.get("total") or 0)
+                except Exception as json_err:
+                    self.record_error(f"Malformed JSON response: {json_err}", "MALFORMED_RESPONSE")
+                    continue
 
-                    for rec in records:
-                        if not isinstance(rec, dict):
-                            continue
-                        try:
-                            parsed_event = self.parse_dataset_record(rec, resource)
-                            if parsed_event:
-                                events.append(parsed_event)
-                        except Exception as parse_err:
-                            logger.error("Failed to parse data.gov.in record in resource %s: %s", resource.resource_id, parse_err)
+                records = data.get("records") or []
+                total = int(data.get("total") or 0)
+                self.is_reachable = True
+                self.is_authenticated = True
+                self.is_data_valid = True
+                self.status = ConnectorStatusEnum.LIVE
 
-                    # Update pagination
-                    new_offset = offset + len(records)
-                    if total > 0 and new_offset >= total:
-                        new_offset = 0  # Wrap around for periodic fresh polling
-                    self.resource_offsets[resource.resource_id] = new_offset
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        continue
+                    try:
+                        parsed_event = self.parse_dataset_record(rec, resource)
+                        if parsed_event:
+                            events.append(parsed_event)
+                    except Exception as parse_err:
+                        logger.error("Failed to parse data.gov.in record in resource %s: %s", resource.resource_id, parse_err)
 
-                    self.consecutive_failures = 0
-                    self.record_success(count=len(records), latency_ms=(time.time() - t0) * 1000)
+                # Update pagination offset
+                new_offset = offset + len(records)
+                if total > 0 and new_offset >= total:
+                    new_offset = 0  # Wrap around for periodic fresh polling
+                self.resource_offsets[resource.resource_id] = new_offset
 
-                elif resp.status_code == 429:
-                    self.consecutive_failures += 1
-                    self.status = ConnectorStatusEnum.DEGRADED
-                    self.record_error("data.gov.in rate limit exceeded (HTTP 429)")
-                    break  # Politeness: halt current cycle on rate limit
-                elif resp.status_code in (401, 403):
-                    self.consecutive_failures += 1
-                    self.status = ConnectorStatusEnum.ERROR
-                    self.record_error(f"data.gov.in authentication failure (HTTP {resp.status_code})")
-                else:
-                    self.consecutive_failures += 1
-                    self.record_error(f"data.gov.in API returned status {resp.status_code}")
+                self.record_success(count=len(records), latency_ms=(time.time() - t0) * 1000)
 
-            except Exception as e:
-                self.consecutive_failures += 1
-                self.record_error(f"data.gov.in poll error on resource {resource.resource_id}: {e}")
+            elif resp.status_code == 429:
+                self.status = ConnectorStatusEnum.RATE_LIMITED
+                self.record_error("data.gov.in rate limit exceeded (HTTP 429)", "RATE_LIMITED")
+                break  # Politeness: stop current polling cycle
+
+            elif resp.status_code in (401, 403):
+                self.status = ConnectorStatusEnum.AUTH_ERROR
+                self.is_authenticated = False
+                self.record_error(f"data.gov.in authentication failure (HTTP {resp.status_code})", "AUTH_ERROR")
+
+            elif resp.status_code == 404:
+                self.record_error(f"Resource {resource.resource_id} not found (HTTP 404)", "INVALID_RESOURCE_ID")
+
+            else:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.record_error(f"data.gov.in API returned HTTP {resp.status_code}", f"HTTP_{resp.status_code}")
 
         return events
 
@@ -421,7 +575,6 @@ class DataGovConnector(BaseConnector):
         if ts_field and ts_field in record:
             ts_val = record[ts_field]
         else:
-            # Check candidate timestamp keys
             for candidate in ["date", "Date", "DATE", "timestamp", "Timestamp", "datetime", "observation_date", "record_date"]:
                 if candidate in record:
                     ts_val = record[candidate]
@@ -519,7 +672,7 @@ class DataGovConnector(BaseConnector):
         if temp_val is not None:
             text_parts.append(f"Temperature: {temp_val} °C.")
         if humidity_val is not None:
-            text_parts.append(f"Relative Humidity: {humidity_val}%..")
+            text_parts.append(f"Relative Humidity: {humidity_val}%.")
         if wind_val is not None:
             text_parts.append(f"Wind: {wind_val} km/h.")
         if condition_str:
@@ -563,3 +716,18 @@ class DataGovConnector(BaseConnector):
             is_demo=self.is_demo,
             idempotency_key=idempotency_key,
         )
+
+    def get_admin_health_status(self) -> Dict[str, Any]:
+        """
+        Exposes the exact admin/source-health indication for DATA_GOV required by Phase 1:
+          CONFIGURED, AUTHENTICATED, REACHABLE, DATA_VALID, LAST_SUCCESS, LAST_FAILURE, FAILURE_REASON
+        """
+        return {
+            "CONFIGURED": bool(self.api_key and self.resources),
+            "AUTHENTICATED": self.is_authenticated,
+            "REACHABLE": self.is_reachable,
+            "DATA_VALID": self.is_data_valid,
+            "LAST_SUCCESS": self.metrics.last_successful_fetch.isoformat() if self.metrics.last_successful_fetch else None,
+            "LAST_FAILURE": self.last_attempt_at.isoformat() if self.consecutive_failures > 0 and self.last_attempt_at else None,
+            "FAILURE_REASON": self.last_error_message,
+        }

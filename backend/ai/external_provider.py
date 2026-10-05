@@ -105,6 +105,7 @@ class ExternalAIProvider(AIProvider):
         nearby_reports: Optional[List[Dict[str, Any]]] = None,
         source_trust: float = 0.5,
         media_analysis: Optional[MediaAnalysisResult] = None,
+        physical_observation: Optional[Dict[str, Any]] = None,
     ) -> EvidenceAssessmentResult:
         return await self._fallback.assess_evidence(
             report_data=report_data,
@@ -112,4 +113,5 @@ class ExternalAIProvider(AIProvider):
             nearby_reports=nearby_reports,
             source_trust=source_trust,
             media_analysis=media_analysis,
+            physical_observation=physical_observation,
         )

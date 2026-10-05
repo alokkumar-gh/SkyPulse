@@ -34,7 +34,16 @@ async def list_locations(
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve Indian states, districts, and cities for spatial querying."""
-    query = select(Location)
+    query = select(
+        Location.id,
+        Location.name,
+        Location.level,
+        Location.state,
+        Location.district,
+        Location.country,
+        Location.lat,
+        Location.lon,
+    )
     if level:
         query = query.where(Location.level == level.upper())
     if state:
@@ -44,20 +53,20 @@ async def list_locations(
 
     query = query.order_by(Location.name.asc()).limit(limit)
     result = await db.execute(query)
-    locations = result.scalars().all()
+    rows = result.all()
 
     return [
         LocationResponse(
-            id=str(loc.id),
-            name=loc.name,
-            level=loc.level,
-            state=loc.state,
-            district=loc.district,
-            country=loc.country,
-            lat=loc.lat,
-            lon=loc.lon,
+            id=str(row[0]),
+            name=row[1],
+            level=row[2],
+            state=row[3],
+            district=row[4],
+            country=row[5],
+            lat=row[6],
+            lon=row[7],
         )
-        for loc in locations
+        for row in rows
     ]
 
 
@@ -79,9 +88,20 @@ async def get_single_location(
             },
         )
 
-    res = await db.execute(select(Location).where(Location.id == l_uuid))
-    loc = res.scalars().first()
-    if not loc:
+    res = await db.execute(
+        select(
+            Location.id,
+            Location.name,
+            Location.level,
+            Location.state,
+            Location.district,
+            Location.country,
+            Location.lat,
+            Location.lon,
+        ).where(Location.id == l_uuid)
+    )
+    row = res.first()
+    if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -92,12 +112,12 @@ async def get_single_location(
         )
 
     return LocationResponse(
-        id=str(loc.id),
-        name=loc.name,
-        level=loc.level,
-        state=loc.state,
-        district=loc.district,
-        country=loc.country,
-        lat=loc.lat,
-        lon=loc.lon,
+        id=str(row[0]),
+        name=row[1],
+        level=row[2],
+        state=row[3],
+        district=row[4],
+        country=row[5],
+        lat=row[6],
+        lon=row[7],
     )

@@ -60,6 +60,7 @@ class KafkaBusProducer:
         self.bootstrap_servers = bootstrap_servers or settings.KAFKA_BOOTSTRAP_SERVERS
         self._producer = None
         self._is_connected = False
+        self._attempted_connect = False
         self._fallback_queues: Dict[str, asyncio.Queue] = {}
 
     @property
@@ -71,6 +72,9 @@ class KafkaBusProducer:
         return self._fallback_queues
 
     async def start(self) -> None:
+        if self._is_connected or self._attempted_connect:
+            return
+        self._attempted_connect = True
         try:
             from aiokafka import AIOKafkaProducer
             extra_kwargs = _build_kafka_kwargs()
@@ -78,11 +82,11 @@ class KafkaBusProducer:
                 bootstrap_servers=self.bootstrap_servers,
                 value_serializer=_json_serializer,
                 key_serializer=lambda k: k.encode("utf-8") if k else None,
-                request_timeout_ms=10000,
+                request_timeout_ms=2000,
                 retry_backoff_ms=200,
                 **extra_kwargs,
             )
-            await asyncio.wait_for(self._producer.start(), timeout=15.0)
+            await asyncio.wait_for(self._producer.start(), timeout=2.0)
             self._is_connected = True
             logger.info("KafkaBusProducer connected to %s", self.bootstrap_servers)
         except Exception as e:
@@ -97,6 +101,7 @@ class KafkaBusProducer:
             except Exception as e:
                 logger.warning("Error stopping Kafka producer: %s", e)
         self._is_connected = False
+        self._attempted_connect = False
 
     async def publish(
         self,

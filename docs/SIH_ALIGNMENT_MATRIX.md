@@ -213,7 +213,7 @@ All 7 required categories are explicitly implemented and validated:
 
 ### P. Live Map
 - **Implementation:** Pure Google Maps integration via `@vis.gl/react-google-maps` with `AdvancedMarker` rendering severity-colored pins.
-- **Current Limitation (Audit Finding):** The configured API key `AIzaSyBzBIUWtH4qs8UrMg6TJWtTF8dJicfMV8k` currently has an "Android apps" restriction in Google Cloud Console. For local web deployment (`localhost`), the browser receives an API key restriction error dialog.
+- **Current Limitation (Audit Finding):** The configured API key requires Maps JavaScript API enabled with web/HTTP referrers in Google Cloud Console. For local web deployment (`localhost`), ensure HTTP referrers or wildcard localhost is allowed.
 - **Status:** **Partially Satisfied / Key Configuration Gap.** Once the GCP key restriction is changed to "HTTP referrers" or "None", markers and map tiles render immediately.
 
 ### Q. Analytics Suite

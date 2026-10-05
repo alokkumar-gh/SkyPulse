@@ -124,6 +124,38 @@ async def get_weather_reports(
     return PaginatedResponse.build(items=reports, total=total, page=page, per_page=per_page)
 
 
+@router.get("/search")
+async def search_weather_reports(
+    q: Optional[str] = Query(None, description="Full-text query string"),
+    category: Optional[str] = Query(None, description="Primary event category"),
+    city: Optional[str] = Query(None, description="City name"),
+    state: Optional[str] = Query(None, description="State name"),
+    verification_status: Optional[str] = Query(None, description="Verification status"),
+    min_confidence: Optional[float] = Query(None, ge=0.0, le=1.0, description="Minimum confidence score"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of hits to return"),
+):
+    """
+    Search weather reports using full-text keyword indexing and faceted filters in OpenSearch.
+    Falls back seamlessly to in-memory/structured search if OpenSearch is offline.
+    """
+    from ai.opensearch_indexer import opensearch_indexer
+    results = await opensearch_indexer.search_reports(
+        category=category,
+        city=city,
+        state=state,
+        verification_status=verification_status,
+        min_confidence=min_confidence,
+        query_text=q,
+        limit=limit,
+    )
+    return {
+        "status": "SUCCESS",
+        "search_engine": "OPENSEARCH" if opensearch_indexer.is_live else "FALLBACK",
+        "total_hits": len(results),
+        "hits": results,
+    }
+
+
 @router.get("/{report_id}", response_model=ReportDetail)
 async def get_single_weather_report(
     report_id: str,

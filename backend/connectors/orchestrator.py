@@ -48,6 +48,7 @@ from connectors.social_web_connector import social_web_connector
 from connectors.weather_api_connector import WeatherAPIConnector
 from connectors.indianapi_connector import IndianAPIWeatherConnector, indianapi_weather_connector
 from connectors.openmeteo_connector import OpenMeteoConnector, openmeteo_connector
+from connectors.weather_discovery import regional_discovery_connector
 
 logger = logging.getLogger("skypulse.connectors.orchestrator")
 
@@ -61,6 +62,7 @@ class SourceFamilyEnum(str):
     NEWS_WEBSITE = "NEWS_WEBSITE"
     CITIZEN_REPORTS = "CITIZEN_REPORTS"
     WEATHER_API = "WEATHER_API"
+    REGIONAL_DISCOVERY = "REGIONAL_DISCOVERY"
     DEMO = "DEMO"
     OTHER = "OTHER"
 
@@ -228,6 +230,17 @@ class SourceOrchestratorService:
             )
         except Exception as e:
             logger.debug("Failed registering Open-Meteo connector: %s", e)
+
+        # 10. Regional Weather Intelligence Discovery Engine
+        try:
+            self.register_connector(
+                connector=regional_discovery_connector,
+                display_name="Regional Weather Intelligence Discovery Engine",
+                source_family=SourceFamilyEnum.REGIONAL_DISCOVERY,
+                polling_interval_seconds=getattr(settings, "REGIONAL_DISCOVERY_POLL_INTERVAL_SECONDS", 240),
+            )
+        except Exception as e:
+            logger.debug("Failed registering Regional Discovery connector: %s", e)
 
     def register_connector(
         self,
@@ -547,6 +560,8 @@ class SourceOrchestratorService:
         elif c.is_demo:
             cfg_status = "DEMO"
 
+        common_health = c.get_common_health()
+
         return UnifiedSourceStatusResponse(
             connector_id=c.source_id,
             display_name=info.display_name,
@@ -556,14 +571,20 @@ class SourceOrchestratorService:
             configuration_status=cfg_status,
             health_status=c.status.value,
             polling_interval_seconds=info.polling_interval_seconds,
-            last_attempt_at=info.last_attempt_at,
+            last_attempt_at=info.last_attempt_at or c.last_attempt_at,
             last_success_at=m.last_successful_fetch,
             last_error_at=m.last_error_at,
             current_error=m.last_error,
+            common_health=common_health,
             stage_telemetry=stage,
             performance=perf,
             recent_runs=list(info.runs_history),
         )
+
+    def get_common_connector_health_reports(self) -> List[Any]:
+        """Returns standard sanitized common connector health models across all connectors."""
+        return [info.connector.get_common_health() for info in self._registered.values()]
+
 
     def get_source_health_matrix(self) -> List[UnifiedSourceStatusResponse]:
         """Returns health and status of all registered ingestion sources."""

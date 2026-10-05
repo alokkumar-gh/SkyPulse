@@ -21,7 +21,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-.venv
+.venv/
 venv/
 ENV/
 env/
@@ -33,12 +33,16 @@ yarn-debug.log*
 yarn-error.log*
 dist/
 dist-ssr/
-*.local
+.eslintcache
+*.tsbuildinfo
 
 # Environment variables & Secrets
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+.env.development
 !.env.example
 *.pem
 *.key
@@ -53,8 +57,9 @@ firebase-adminsdk*.json
 *~
 .DS_Store
 Thumbs.db
+.kilo/
 
-# Database / Storage data volumes
+# Database / Storage data volumes & SQLite locks
 data/
 minio-data/
 postgres-data/
@@ -63,17 +68,23 @@ neo4j-data/
 redis-data/
 redpanda-data/
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 *.nc
 tmp_*
 raw_era5/
 scratch/
 scratch_*
 scripts/*.json
-
-
-
+scripts/mastodon_search_results.json
+coverage_audit_results.json
+backend/coverage_audit_results.json
+last_planner.txt
+last_req.txt
 
 # Testing & Coverage
 .coverage
@@ -94,4 +105,3 @@ ml_training/logs/
 ml_training/datasets/
 ml_training/era5_raw/
 ml_training/*.zip
-

@@ -40,6 +40,20 @@ export type AlertStatus = 'CREATED' | 'DELIVERED' | 'ACKNOWLEDGED' | 'EXPIRED' |
 // Time range presets
 export type TimeRangePreset = '1h' | '6h' | '24h' | '7d' | 'custom';
 
+// ── GeoJSON Geometry Types for CAP Multi-Vertex Hazard Areas ────────────
+
+export interface GeoJSONPolygon {
+  type: 'Polygon';
+  coordinates: number[][][]; // [ [ [lon, lat], [lon, lat], ... ] ]
+}
+
+export interface GeoJSONMultiPolygon {
+  type: 'MultiPolygon';
+  coordinates: number[][][][];
+}
+
+export type HazardGeometry = GeoJSONPolygon | GeoJSONMultiPolygon;
+
 // ── API Response Types ──────────────────────────────────────────────────
 
 export interface EventLocation {
@@ -51,10 +65,70 @@ export interface EventLocation {
   confidence?: string;
 }
 
+export interface MapIncident {
+  id: string;
+  event_id: string;
+  category: WeatherCategory;
+  sub_category?: string;
+  phenomenon?: string;
+  severity: number;
+  latitude: number;
+  longitude: number;
+  location_name: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  event_nature: string;
+  temporal_scope?: string;
+  is_current_observation?: boolean;
+  evidence_basis?: string;
+  status: string;
+  source_count: number;
+  independent_source_count: number;
+  supporting_signal_count: number;
+  last_updated_at: string;
+  first_reported_at?: string;
+  icon: string;
+  label: string;
+  has_polygon?: boolean;
+  hazard_polygon?: HazardGeometry | null;
+}
+
+export interface StateCoverage {
+  state: string;
+  districts_with_active_events: number;
+  cities_with_active_events: number;
+  mapped_events: number;
+  regional_events: number;
+  active_events: number;
+}
+
+export interface CoverageReport {
+  states_total: number;
+  states_covered: number;
+  states_represented?: number;
+  districts_total: number;
+  districts_covered: number;
+  districts_represented?: number;
+  districts_with_weather?: number;
+  cities_with_weather?: number;
+  stations_reporting: number;
+  active_events: number;
+  active_events_count?: number;
+  current_observations_count?: number;
+  active_warnings_count?: number;
+  fresh_news_count?: number;
+  coverage_updated_at?: string;
+  mapped_incidents: number;
+  regional_events: number;
+  state_breakdown: StateCoverage[];
+}
+
 export interface WeatherEvent {
   id: string;
   category: WeatherCategory;
   sub_category?: string;
+  phenomenon?: string;
   severity: number; // 1-4
   confidence_score: number; // 0.0-1.0
   verification_status: VerificationStatus;
@@ -62,6 +136,13 @@ export interface WeatherEvent {
   first_reported_at: string;
   last_updated_at: string;
   resolved_at?: string | null;
+  observed_at?: string;
+  ingested_at?: string;
+  last_seen_at?: string;
+  expires_at?: string;
+  lifecycle_status?: 'DETECTED' | 'ACTIVE' | 'STALE' | 'EXPIRED';
+  freshness_label?: string;
+  freshness_category?: 'LIVE' | 'RECENT' | 'STALE' | 'EXPIRED';
   evidence_count: number;
   is_anomalous: boolean;
   anomaly_z_score?: number | null;
@@ -69,26 +150,111 @@ export interface WeatherEvent {
   is_demo: boolean;
   // Convenience compatibility fields
   title?: string;
+  summary?: string;
   description?: string;
   latitude?: number;
   longitude?: number;
   state?: string;
   district?: string;
+  city?: string;
   created_at?: string;
   updated_at?: string;
   report_count?: number;
   is_synthetic?: boolean;
+  source?: string;
+  source_name?: string;
+  sources_count?: number;
+  independent_source_count?: number;
+  corroborating_source_count?: number;
+  supporting_signal_count?: number;
+  signal_count?: number;
+  source_claim_label?: string;
+  confidence_tier?: string;
+  confidence_tier_label?: string;
+  signal_type?: 'EVENT' | 'OBSERVATION' | 'WARNING' | 'NEWS' | 'FORECAST' | 'ALERT';
+  layer_type?: string;
+  valid_from?: string;
+  valid_until?: string;
+  telemetry?: any;
+  temperature_c?: number;
+  apparent_temperature_c?: number | null;
+  temp_label?: string;
+  weather_icon?: string;
+  condition?: string;
+  weather_condition?: string;
+  event_nature?: string;
+  temporal_scope?: string;
+  is_current_observation?: boolean;
+  is_current_observation_supported?: boolean;
+  observation_summary?: string;
+  observation_status_label?: string;
+  evidence_basis?: string;
+  icon?: string;
+  label?: string;
+  publishers?: string[];
+  sources?: SourceItem[];
+  evidence?: EvidenceDetailItem[];
+  // Section 24 & Multi-location fields
+  affected_districts?: string[];
+  affected_states?: string[];
+  affected_district_count?: number;
+  source_published_at?: string;
+  source_updated_at?: string;
+  freshness_status?: 'LIVE' | 'RECENT' | 'STALE' | 'ARCHIVED';
+  location_resolution?: 'CITY' | 'DISTRICT' | 'STATE' | 'COORDINATES' | 'UNKNOWN';
+  // CAP Multi-Vertex Hazard Polygon
+  has_polygon?: boolean;
+  hazard_polygon?: HazardGeometry | null;
   // Optional full detail fields
   verification?: VerificationResult;
   evidence_reports?: EvidenceReport[];
 }
 
+export interface SourceItem {
+  source_id?: string;
+  source_name?: string;
+  source_type?: string;
+  publisher?: string;
+  source_url?: string;
+  title?: string;
+  snippet?: string;
+  published_at?: string;
+  fetched_at?: string;
+}
+
+export interface EvidenceDetailItem {
+  report_id?: string;
+  id?: string;
+  source_id?: string;
+  source_name?: string;
+  source_type?: string;
+  publisher?: string;
+  source_url?: string;
+  original_url?: string;
+  title?: string;
+  snippet?: string;
+  text?: string;
+  relevance?: string;
+  trust_score?: number;
+  event_time?: string;
+  ingested_at?: string;
+  ai_extraction?: Record<string, any>;
+}
+
 export interface EvidenceReport {
   id: string;
-  source_type: SourceType;
+  source_name?: string;
+  source_type: SourceType | string;
+  publisher?: string;
+  source_url?: string;
+  title?: string;
+  snippet?: string;
   event_time: string;
+  ingested_at?: string;
   severity: number;
   confidence_score?: number;
+  relevance?: string;
+  trust_score?: number;
   location?: EventLocation;
   summary?: string;
   normalized_text?: string;
@@ -556,6 +722,12 @@ export interface RelatedEventLink {
 export interface EventDNASnapshot {
   event_id: string;
   event_type: string;
+  sub_category?: string | null;
+  phenomenon?: string | null;
+  event_nature?: string | null;
+  temporal_scope?: string | null;
+  is_current_observation?: boolean;
+  evidence_basis?: string | null;
   status: string;
   severity: number;
   source_count: number;
@@ -573,6 +745,11 @@ export interface EventDNAResponse {
   event_id: string;
   event_type: string;
   sub_category?: string | null;
+  phenomenon?: string | null;
+  event_nature?: string | null;
+  temporal_scope?: string | null;
+  is_current_observation?: boolean;
+  evidence_basis?: string | null;
   status: string;
   lifecycle_phase: string;
   severity: number;
@@ -933,6 +1110,64 @@ export interface SocialWebSourcesListResponse {
   total: number;
   sources: SocialWebSourceDetail[];
   timestamp: string;
+}
+
+/** Weather Observation Feature for Routine Measurement Map Layer */
+export interface WeatherObservationFeature {
+  id: string;
+  name: string;
+  city?: string;
+  state: string;
+  latitude: number;
+  longitude: number;
+  temperature_c?: number;
+  temp_label: string;
+  weather_icon: string;
+  condition: string;
+  humidity_percent?: number;
+  rain_mm?: number;
+  wind_speed_kmh?: number;
+  source: string;
+  model?: string;
+  observed_at: string;
+  freshness_label?: string;
+  freshness_category?: string;
+  warning_status: string;
+  incident_count: number;
+  layer_type: 'WEATHER_OBSERVATION';
+}
+
+export interface DistrictWeatherItem {
+  district_id: string;
+  district_name: string;
+  city?: string;
+  state: string;
+  latitude: number;
+  longitude: number;
+  observation_type: string;
+  weather: {
+    temperature_c?: number;
+    apparent_temperature_c?: number;
+    humidity_percent?: number;
+    precipitation_mm?: number;
+    rain_mm?: number;
+    wind_speed_kmh?: number;
+    wind_direction_deg?: number;
+    wind_gust_kmh?: number;
+    pressure_hpa?: number;
+    cloud_cover_percent?: number;
+    weather_code?: number;
+    weather_condition: string;
+    weather_icon: string;
+    observed_at?: string;
+  };
+  source: {
+    provider: string;
+    model?: string;
+    provenance: string;
+  };
+  warning_status: string;
+  active_incidents: Array<Record<string, any>>;
 }
 
 

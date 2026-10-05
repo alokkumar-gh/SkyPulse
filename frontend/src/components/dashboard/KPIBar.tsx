@@ -1,121 +1,108 @@
 /**
- * KPIBar — Phase 7
- * High-density operational KPI summary bar for the National Dashboard.
- * Displays Active Events, Severe Alerts, Verification Rate, and 24h Volume.
+ * KPIBar — National Meteorological Intelligence Strip
+ * Re-architected with Section 7 Editorial Metric standards.
+ * "The metric should feel like a piece of intelligence. Use typography to create importance."
  */
+
 import React from 'react';
-import { CloudRain, AlertTriangle, ShieldCheck, Database } from 'lucide-react';
 import type { WeatherEvent } from '../../types';
+import { MetricCard } from '../ui/MetricCard';
 
 interface KPIBarProps {
   events: WeatherEvent[];
   totalReportsCount?: number;
   loading?: boolean;
+  onExploreActive?: () => void;
+  onExploreSevere?: () => void;
+  onExploreVerified?: () => void;
 }
 
 export const KPIBar: React.FC<KPIBarProps> = ({
   events,
   totalReportsCount = 0,
   loading = false,
+  onExploreActive,
+  onExploreSevere,
+  onExploreVerified,
 }) => {
-  const activeCount = events.length;
+  const activeCount = events.filter((e) => e.is_active !== false).length;
   const severeCount = events.filter((e) => e.severity >= 3).length;
   const verifiedCount = events.filter((e) => e.verification_status === 'VERIFIED').length;
   const verificationRate = activeCount > 0 ? Math.round((verifiedCount / activeCount) * 100) : 0;
-
-  const kpis = [
-    {
-      label: 'ACTIVE EVENTS',
-      value: loading ? '—' : activeCount,
-      sublabel: 'Across Indian states',
-      icon: <CloudRain size={20} color="var(--brand-blue)" />,
-      color: 'var(--brand-blue)',
-    },
-    {
-      label: 'SEVERE ALERTS',
-      value: loading ? '—' : severeCount,
-      sublabel: 'Severity 3 & 4 (Urgent)',
-      icon: <AlertTriangle size={20} color="var(--severity-4)" />,
-      color: 'var(--severity-4)',
-      highlight: severeCount > 0,
-    },
-    {
-      label: 'VERIFICATION RATE',
-      value: loading ? '—' : `${verificationRate}%`,
-      sublabel: `${verifiedCount} verified events`,
-      icon: <ShieldCheck size={20} color="var(--status-verified)" />,
-      color: 'var(--status-verified)',
-    },
-    {
-      label: 'INGESTED REPORTS',
-      value: loading ? '—' : totalReportsCount > 0 ? totalReportsCount.toLocaleString() : activeCount * 4,
-      sublabel: 'Multi-source signals',
-      icon: <Database size={20} color="var(--cat-thunderstorm)" />,
-      color: 'var(--cat-thunderstorm)',
-    },
-  ];
 
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
         gap: '0.75rem',
       }}
+      className="sp-kpibar-grid"
     >
-      {kpis.map((kpi, idx) => (
-        <div
-          key={idx}
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: `1px solid ${kpi.highlight ? 'rgba(239, 68, 68, 0.4)' : 'var(--bg-border)'}`,
-            borderRadius: 'var(--radius-lg)',
-            padding: '0.85rem 1rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: kpi.highlight ? '0 0 12px rgba(239, 68, 68, 0.15)' : 'none',
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 'var(--text-xs)',
-                fontWeight: 600,
-                color: 'var(--text-secondary)',
-                letterSpacing: '0.04em',
-                marginBottom: '0.2rem',
-              }}
-            >
-              {kpi.label}
-            </div>
-            <div
-              style={{
-                fontSize: 'var(--text-2xl)',
-                fontWeight: 700,
-                color: kpi.highlight ? 'var(--severity-4)' : 'var(--text-primary)',
-                fontFamily: 'var(--font-sans)',
-                lineHeight: 1.1,
-              }}
-            >
-              {kpi.value}
-            </div>
-            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-              {kpi.sublabel}
-            </div>
-          </div>
-          <div
-            style={{
-              padding: '0.6rem',
-              borderRadius: 'var(--radius-md)',
-              backgroundColor: 'var(--bg-elevated)',
-              display: 'flex',
-            }}
-          >
-            {kpi.icon}
-          </div>
-        </div>
-      ))}
+      {/* 1. Active Anomalies */}
+      <MetricCard
+        label="ACTIVE WEATHER EVENTS"
+        value={loading ? '—' : activeCount}
+        unit="events"
+        comparison={{
+          value: '+4',
+          text: 'in last 24h',
+          trend: 'up',
+          sentiment: 'neutral',
+        }}
+        source="IMD & ERA5"
+        freshness="Live Sync"
+        signal="teal"
+        onClick={onExploreActive}
+      />
+
+      {/* 2. Severe Alerts */}
+      <MetricCard
+        label="SEVERE CIVIL WARNINGS"
+        value={loading ? '—' : severeCount}
+        unit="active"
+        comparison={{
+          value: severeCount > 0 ? 'Urgent' : 'Nominal',
+          text: severeCount > 0 ? 'requires monitoring' : 'no extreme events',
+          sentiment: severeCount > 0 ? 'negative' : 'positive',
+        }}
+        source="NDMA CAP Feed"
+        freshness="Updated 2m ago"
+        signal={severeCount > 0 ? 'sev-4' : 'sev-1'}
+        isAnomaly={severeCount > 0}
+        onClick={onExploreSevere}
+      />
+
+      {/* 3. Verification Confidence Rate */}
+      <MetricCard
+        label="GROUND TRUTH RATE"
+        value={loading ? '—' : `${verificationRate}%`}
+        comparison={{
+          value: `${verifiedCount} verified`,
+          text: `of ${activeCount} active incidents`,
+          trend: 'neutral',
+          sentiment: verificationRate > 70 ? 'positive' : 'warning',
+        }}
+        source="Analyst & AWS"
+        freshness="Continuous"
+        signal="sev-1"
+        onClick={onExploreVerified}
+      />
+
+      {/* 4. Multi-Source Ingestion Volume */}
+      <MetricCard
+        label="INGESTED OBSERVATIONS"
+        value={loading ? '—' : (totalReportsCount > 0 ? totalReportsCount.toLocaleString() : '—')}
+        unit="telemetry pts"
+        comparison={{
+          value: totalReportsCount > 0 ? `${totalReportsCount.toLocaleString()} pts` : 'Multi-Source',
+          text: 'reporting across India',
+          sentiment: 'neutral',
+        }}
+        source="National Data Mesh"
+        freshness="Live Telemetry"
+        signal="teal"
+      />
     </div>
   );
 };

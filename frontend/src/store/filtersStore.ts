@@ -44,7 +44,7 @@ const DEFAULT_FILTERS: DashboardFilters = {
   severityMin: 1,
   severityMax: 4,
   confidenceMin: 0,
-  showDemoData: true,
+  showDemoData: import.meta.env?.VITE_DATA_MODE === 'demo',
   sourceTypes: [],
 };
 

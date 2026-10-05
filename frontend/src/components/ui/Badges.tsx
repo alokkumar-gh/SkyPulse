@@ -153,24 +153,76 @@ export function CategoryBadge({ category, showIcon = true, showLabel = true }: C
   );
 }
 
-// ── Demo Badge ──────────────────────────────────────────────────────────────
-export function DemoBadge() {
+// ── Phenomenon Badge ────────────────────────────────────────────────────────
+const PHENOMENON_CONFIG: Record<string, { color: string; icon: string; label: string }> = {
+  RAINFALL_DEFICIT: { color: '#f59e0b', icon: '📉', label: 'Rainfall Deficit' },
+  RAINFALL_EXCESS: { color: '#3b82f6', icon: '📈', label: 'Rainfall Excess' },
+  DRY_SPELL: { color: '#d97706', icon: '🏜️', label: 'Dry Spell' },
+  NO_RAIN: { color: '#b45309', icon: '☀️', label: 'No Rain' },
+  HEAVY_RAINFALL: { color: '#2563eb', icon: '🌧️', label: 'Heavy Rainfall' },
+  EXTREME_RAINFALL: { color: '#dc2626', icon: '⛈️', label: 'Extreme Rainfall' },
+  RAINFALL_OBSERVED: { color: '#60a5fa', icon: '🌧️', label: 'Observed Rain' },
+  WEATHER_OBSERVATION: { color: '#38bdf8', icon: '📊', label: 'Observation' },
+  UNKNOWN: { color: 'var(--text-muted)', icon: '❓', label: 'Unknown' },
+};
+
+export function PhenomenonBadge({ phenomenon, showIcon = true }: { phenomenon?: string; showIcon?: boolean }) {
+  if (!phenomenon) return null;
+  const config = PHENOMENON_CONFIG[phenomenon] || {
+    color: '#38bdf8',
+    icon: '⚡',
+    label: phenomenon.replace(/_/g, ' '),
+  };
   return (
     <span
       style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.25rem',
+        padding: '0.12rem 0.45rem',
+        borderRadius: 'var(--radius-full)',
+        fontSize: 'var(--text-xs)',
+        fontWeight: 700,
+        color: config.color,
+        backgroundColor: `${config.color}18`,
+        border: `1px solid ${config.color}40`,
+        letterSpacing: '0.03em',
+      }}
+      aria-label={`Phenomenon: ${config.label}`}
+    >
+      {showIcon && config.icon} {config.label.toUpperCase()}
+    </span>
+  );
+}
+
+export function TemporalScopeBadge({ scope }: { scope?: string }) {
+  if (!scope) return null;
+  const isSeasonal = scope.toUpperCase() === 'SEASONAL';
+  const color = isSeasonal ? '#c084fc' : '#38bdf8';
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.2rem',
         padding: '0.1rem 0.4rem',
         borderRadius: 'var(--radius-full)',
         fontSize: '0.625rem',
         fontWeight: 700,
-        letterSpacing: '0.05em',
-        backgroundColor: 'rgba(124, 58, 237, 0.12)',
-        color: 'var(--demo-badge)',
-        border: '1px solid rgba(124, 58, 237, 0.25)',
+        fontFamily: 'var(--font-mono)',
+        color,
+        backgroundColor: `${color}18`,
+        border: `1px solid ${color}35`,
       }}
     >
-      DEMO
+      SCOPE: {scope.toUpperCase()}
     </span>
   );
+}
+
+// ── Demo Badge ──────────────────────────────────────────────────────────────
+export function DemoBadge() {
+  return null;
 }
 
 // ── Confidence Bar ──────────────────────────────────────────────────────────

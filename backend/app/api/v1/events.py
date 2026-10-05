@@ -50,8 +50,10 @@ def _parse_uuid_or_400(event_id: str) -> uuid.UUID:
 async def get_weather_events(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    q: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     severity: Optional[int] = Query(None, ge=1, le=4),
+    severity_min: Optional[int] = Query(None, ge=1, le=4),
     status: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     district: Optional[str] = Query(None),
@@ -70,8 +72,10 @@ async def get_weather_events(
         db=db,
         page=page,
         per_page=per_page,
+        q=q,
         category=category,
         severity=severity,
+        severity_min=severity_min,
         status=status,
         state=state,
         district=district,
@@ -85,6 +89,122 @@ async def get_weather_events(
         has_propagation=has_propagation,
     )
     return PaginatedResponse.build(items=events, total=total, page=page, per_page=per_page)
+
+
+@router.get("/changes")
+async def get_event_changes(
+    since: Optional[str] = Query(None, description="ISO timestamp or client revision for delta sync"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delta synchronization endpoint (Section 10).
+    Returns incremental changes: created, updated, expired, deactivated, server_time, revision.
+    Eliminates redundant full-dataset downloads during fallback polling.
+    """
+    from datetime import timezone, timedelta
+    from sqlalchemy import select, or_
+    from app.models.weather_event import WeatherEvent
+
+    server_time = datetime.now(timezone.utc)
+    since_dt = None
+    if since:
+        try:
+            cleaned = since.replace("Z", "+00:00")
+            since_dt = datetime.fromisoformat(cleaned)
+            if since_dt.tzinfo is None:
+                since_dt = since_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            since_dt = None
+
+    def _event_dict(e: WeatherEvent) -> dict:
+        obs_dt = e.effective_observed_at
+        ing_dt = e.effective_ingested_at
+        seen_dt = e.effective_last_seen_at
+        exp_dt = e.effective_expires_at
+        return {
+            "id": str(e.id),
+            "event_id": str(e.id),
+            "category": e.category,
+            "sub_category": e.sub_category,
+            "severity": e.severity,
+            "confidence": e.confidence_score,
+            "confidence_score": e.confidence_score,
+            "verification_status": e.verification_status,
+            "status": e.effective_lifecycle_status,
+            "lifecycle_status": e.effective_lifecycle_status,
+            "state": e.primary_state,
+            "district": e.primary_district,
+            "city": e.primary_city,
+            "latitude": e.centroid_lat,
+            "longitude": e.centroid_lon,
+            "location": {
+                "state": e.primary_state,
+                "district": e.primary_district,
+                "city": e.primary_city,
+                "lat": e.centroid_lat,
+                "lon": e.centroid_lon,
+            },
+            "observed_at": obs_dt.isoformat() if obs_dt else None,
+            "ingested_at": ing_dt.isoformat() if ing_dt else None,
+            "last_seen_at": seen_dt.isoformat() if seen_dt else None,
+            "expires_at": exp_dt.isoformat() if exp_dt else None,
+            "first_reported_at": e.first_reported_at.isoformat() if e.first_reported_at else None,
+            "last_updated_at": e.last_updated_at.isoformat() if e.last_updated_at else None,
+            "evidence_count": e.evidence_count,
+            "supporting_signal_count": e.evidence_count,
+            "source_count": 1,
+            "is_active": e.is_active and (e.effective_lifecycle_status != "EXPIRED"),
+            "is_anomalous": e.is_anomalous,
+        }
+
+    created_events = []
+    updated_events = []
+    expired_ids = []
+    deactivated_ids = []
+
+    if since_dt is None:
+        # Initial synchronization: return all fresh active events as created
+        q = select(WeatherEvent).where(
+            WeatherEvent.is_deleted == False,
+            WeatherEvent.is_active == True,
+            WeatherEvent.resolved_at.is_(None),
+            or_(WeatherEvent.expires_at.is_(None), WeatherEvent.expires_at > server_time),
+            WeatherEvent.lifecycle_status != "EXPIRED",
+        ).limit(300)
+        res = await db.execute(q)
+        for e in res.scalars().all():
+            if e.effective_lifecycle_status != "EXPIRED":
+                created_events.append(_event_dict(e))
+    else:
+        # Delta mode: fetch events modified, created, or resolved since since_dt
+        q = select(WeatherEvent).where(
+            or_(
+                WeatherEvent.last_updated_at >= since_dt,
+                WeatherEvent.created_at >= since_dt,
+                WeatherEvent.updated_at >= since_dt,
+                WeatherEvent.resolved_at >= since_dt,
+            )
+        ).limit(300)
+        res = await db.execute(q)
+        for e in res.scalars().all():
+            if e.is_deleted or not e.is_active:
+                deactivated_ids.append(str(e.id))
+            elif e.effective_lifecycle_status == "EXPIRED":
+                expired_ids.append(str(e.id))
+            elif e.created_at and e.created_at >= since_dt and e.evidence_count <= 1:
+                created_events.append(_event_dict(e))
+            else:
+                updated_events.append(_event_dict(e))
+
+    revision = int(server_time.timestamp() * 1000)
+    return {
+        "created": created_events,
+        "updated": updated_events,
+        "expired": expired_ids,
+        "deactivated": deactivated_ids,
+        "revision": revision,
+        "server_time": server_time.isoformat(),
+    }
 
 
 @router.get("/nearby", response_model=List[NearbyEvent])

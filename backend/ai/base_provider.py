@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field
 class ClassificationResult(BaseModel):
     category: str  # RAINFALL, THUNDERSTORM, FLOODING, HEATWAVE, FOG, DUST_STORM, STRONG_WINDS, UNKNOWN
     sub_category: Optional[str] = None
+    phenomenon: Optional[str] = None  # RAINFALL_DEFICIT, RAINFALL_OBSERVED, HEAVY_RAINFALL, etc.
+    event_nature: str = "OBSERVATION"  # ANOMALY, OBSERVATION, WARNING, FORECAST, RETROSPECTIVE
+    temporal_scope: str = "CURRENT"    # CURRENT, DAILY, WEEKLY, MONTHLY, SEASONAL, HISTORICAL
+    is_current_observation: bool = True
+    evidence_basis: str = "CURRENT_OBSERVATION"
     confidence: float = Field(ge=0.0, le=1.0)
     severity: int = Field(ge=1, le=4)
     evidence_signals: List[str] = Field(default_factory=list)
@@ -137,6 +142,7 @@ class AIProvider(ABC):
         nearby_reports: Optional[List[Dict[str, Any]]] = None,
         source_trust: float = 0.5,
         media_analysis: Optional[MediaAnalysisResult] = None,
+        physical_observation: Optional[Dict[str, Any]] = None,
     ) -> EvidenceAssessmentResult:
         """Synthesize multi-source signals into an explainable verification verdict."""
         pass

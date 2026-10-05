@@ -66,6 +66,13 @@ function normalizeWSEvent(event: WSEventEnvelope): WeatherEvent | null {
     anomaly_z_score: d.anomaly_z_score,
     is_active: d.is_active !== undefined ? Boolean(d.is_active) : true,
     is_demo: Boolean(d.is_demo),
+    observed_at: d.observed_at || d.first_reported_at,
+    ingested_at: d.ingested_at,
+    last_seen_at: d.last_seen_at,
+    expires_at: d.expires_at,
+    lifecycle_status: d.lifecycle_status || d.status,
+    freshness_label: d.freshness_label,
+    freshness_category: d.freshness_category,
   };
 }
 
@@ -157,17 +164,50 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         });
       }
 
-      // Handle Real-time Weather Event Updates (SIH Live Synchronization)
+      // Handle Real-time Weather Event Updates (Section 6, 7, 8)
       if (
+        event.type === "EVENT_CREATED" ||
         event.type === "weather_event.created" ||
+        event.type === "event.created" ||
+        event.type === "EVENT_UPDATED" ||
         event.type === "weather_event.updated" ||
         event.type === "weather_event.cluster_updated" ||
-        event.type === "event.created" ||
         event.type === "event.updated"
       ) {
         const normalized = normalizeWSEvent(event);
         if (normalized) {
           useEventsStore.getState().addOrUpdateEvent(normalized);
+        }
+      }
+
+      // Handle Event Expiration / Deactivation in Real-time (Section 6, 8, 11)
+      if (
+        event.type === "EVENT_EXPIRED" ||
+        event.type === "weather_event.expired" ||
+        event.type === "EVENT_DEACTIVATED" ||
+        event.type === "weather_event.deactivated"
+      ) {
+        const d = (event.data || {}) as Record<string, any>;
+        const eventId = event.event_id || d.event_id || d.id;
+        if (eventId) {
+          useEventsStore.getState().removeEvent(String(eventId));
+        }
+      }
+
+      // Handle Routine Weather Observation Updates (Section 16, 23)
+      if (
+        event.type === "WEATHER_OBSERVATION_UPDATED" ||
+        event.type === "weather_observation.updated"
+      ) {
+        const d = (event.data || {}) as Record<string, any>;
+        if (Array.isArray(d.sample_districts)) {
+          useEventsStore.getState().updateObservationBatch(d.sample_districts);
+        } else if (Array.isArray(d.observations)) {
+          useEventsStore.getState().updateObservationBatch(d.observations);
+        } else if (d.observation) {
+          useEventsStore.getState().updateObservation(d.observation);
+        } else if (d.district || d.state) {
+          useEventsStore.getState().updateObservation(d);
         }
       }
 
@@ -198,22 +238,49 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
   }, [onEvent, addNotification]);
 
-  // Register status handler
-  useEffect(() => {
-    if (!onStatusChange) return;
-    const cleanup = skyPulseWSClient.onStatusChange(onStatusChange);
-    return cleanup;
-  }, [onStatusChange]);
-
   // Connect / disconnect lifecycle
   useEffect(() => {
     if (!autoConnect) return;
     skyPulseWSClient.connect();
     return () => {
       // Don't disconnect on unmount — singleton stays connected
-      // to avoid thrashing on re-renders
     };
   }, [autoConnect]);
+
+  // Periodic client-side auto-expiration timer (Section 12)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      useEventsStore.getState().expireOldEvents();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isConnected = status === WSConnectionStatus.CONNECTED || status === WSConnectionStatus.AUTHENTICATED;
+  const lastSyncRef = useRef<string | null>(null);
+
+  // Fallback Polling when WebSocket is disconnected (Section 9 & 29)
+  useEffect(() => {
+    if (isConnected) {
+      return; // No redundant polling when live WebSocket is connected
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const { eventsAPI } = await import("../utils/api");
+        const changes = await eventsAPI.getChanges(lastSyncRef.current ?? undefined);
+        if (changes) {
+          if (changes.server_time) {
+            lastSyncRef.current = changes.server_time;
+          }
+          useEventsStore.getState().applyDeltaSync(changes);
+        }
+      } catch (err) {
+        // Polling failed quietly, retry on next tick
+      }
+    }, 15000);
+
+    return () => clearInterval(pollInterval);
+  }, [isConnected]);
 
   // Apply filters when they change
   useEffect(() => {
@@ -234,8 +301,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     skyPulseWSClient.disconnect();
     setTimeout(() => skyPulseWSClient.connect(), 100);
   }, []);
-
-  const isConnected = status === WSConnectionStatus.CONNECTED || status === WSConnectionStatus.AUTHENTICATED;
 
   return {
     status,

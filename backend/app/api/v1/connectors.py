@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, get_optional_current_user, require_role
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
@@ -39,7 +39,7 @@ connectors_router = router
 
 @router.get("", response_model=SocialWebConnectorOverviewResponse)
 async def get_social_web_overview(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     Overview of the Social & Web Weather Intelligence Connector,
@@ -72,7 +72,7 @@ async def get_social_web_overview(
 
 @router.get("/status", response_model=SocialWebConnectorStatusResponse)
 async def get_social_web_status(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     Real-time operational status and metrics telemetry for Social & Web ingestion.
@@ -122,7 +122,7 @@ async def get_social_web_status(
 
 @router.get("/hashtags")
 async def get_configured_hashtags(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """Get the active list of weather hashtags configured for social media ingestion."""
     return {
@@ -148,7 +148,7 @@ async def update_configured_hashtags(
 
 @router.get("/sources", response_model=SocialWebSourcesListResponse)
 async def list_social_web_sources(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     List all configured Social & Web source providers with metrics and health.
@@ -692,6 +692,7 @@ from app.schemas.orchestration import (
     HistoricalPerformanceSummaryResponse,
     PruneHistoryResponse,
 )
+from connectors.schema import CommonConnectorHealthReport
 from connectors.orchestrator import source_orchestrator
 
 unified_connectors_router = APIRouter(prefix="/connectors", tags=["Connectors - Unified Orchestration"])
@@ -699,7 +700,7 @@ unified_connectors_router = APIRouter(prefix="/connectors", tags=["Connectors - 
 
 @unified_connectors_router.get("/overview", response_model=UnifiedNationalOverviewResponse)
 async def get_unified_national_overview(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     National-level operational overview aggregating pipeline stages,
@@ -710,15 +711,24 @@ async def get_unified_national_overview(
 
 @unified_connectors_router.get("/health", response_model=List[UnifiedSourceStatusResponse])
 async def get_unified_sources_health(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """Health matrix and operational status across all registered data ingestion sources."""
     return source_orchestrator.get_source_health_matrix()
 
 
+@unified_connectors_router.get("/common-health", response_model=List[CommonConnectorHealthReport])
+async def get_common_sources_health(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
+    """Standardized sanitized common connector health model across all registered data ingestion sources."""
+    return source_orchestrator.get_common_connector_health_reports()
+
+
+
 @unified_connectors_router.get("/telemetry")
 async def get_unified_pipeline_telemetry(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
     Detailed pipeline stage telemetry breakdown from fetch to DWEG integration
@@ -736,7 +746,7 @@ async def get_unified_pipeline_telemetry(
 @unified_connectors_router.get("/runs", response_model=IngestionRunsListResponse)
 async def get_recent_ingestion_runs(
     limit: int = 50,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """Recent live ingestion run history across all connectors."""
     runs = source_orchestrator.get_recent_runs(limit=limit)
@@ -915,3 +925,143 @@ async def trigger_connector_poll(
         run=run_res,
         message=f"Ingestion run completed with status '{run_res.status.value}'.",
     )
+
+
+# ==============================================================================
+# Regional Weather Intelligence Discovery Engine – Admin Endpoints
+# ==============================================================================
+
+# Lazy import so the discovery package is only loaded when needed
+def _get_regional_connector():
+    from connectors.weather_discovery import regional_discovery_connector as _rdc
+    return _rdc
+
+
+@unified_connectors_router.get("/regional-discovery/status")
+async def get_regional_discovery_status(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Detailed status of the Regional Weather Intelligence Discovery Engine.
+    Shows per-layer health (RSS feeds + GNews RSS), query engine stats,
+    cycle counts, and aggregate throughput.
+    """
+    rdc = _get_regional_connector()
+    return rdc.get_discovery_status()
+
+
+@unified_connectors_router.get("/regional-discovery/feeds")
+async def get_regional_discovery_feeds(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List all registered RSS/Atom feeds in the Regional Discovery Engine,
+    including name, URL, language, state coverage, and trust score.
+    """
+    from connectors.weather_discovery.regional_rss import RSS_FEEDS
+    return {
+        "total": len(RSS_FEEDS),
+        "feeds": [
+            {
+                "name": f.name,
+                "url": f.url,
+                "source_type": f.source_type,
+                "language": f.language,
+                "state_coverage": f.state_coverage,
+                "trust_score": f.trust_score,
+                "enabled": f.enabled,
+                "requires_weather_filter": f.requires_weather_filter,
+            }
+            for f in RSS_FEEDS
+        ],
+    }
+
+
+@unified_connectors_router.get("/regional-discovery/query-matrix")
+async def get_regional_discovery_query_matrix(
+    current_user: User = Depends(get_current_user),
+    top: int = 50,
+):
+    """
+    Preview the top N highest-priority LOCATION × EVENT × LANGUAGE queries
+    that the discovery engine would generate in the next cycle.
+    Useful for validating coverage and debugging query generation.
+    """
+    from connectors.weather_discovery.query_engine import QueryEngine
+    qe = QueryEngine(max_keywords_per_event_lang=1, include_multilingual=True, shuffle=False)
+    queries = qe.generate()[:top]
+    return {
+        "total_unique_queries": qe.total_query_count(),
+        "showing_top": len(queries),
+        "queries": [
+            {
+                "query": q.query,
+                "location": q.location,
+                "state": q.state,
+                "event": q.event_key,
+                "language": q.language,
+                "priority": q.priority,
+            }
+            for q in queries
+        ],
+    }
+
+
+@unified_connectors_router.get("/regional-discovery/locations")
+async def get_regional_discovery_locations(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return the full India location database used by the discovery engine
+    (states, districts, coverage regions).
+    """
+    from connectors.weather_discovery.india_locations import (
+        INDIA_STATES,
+        INDIA_DISTRICTS,
+        HIGH_PRIORITY_LOCATIONS,
+        CYCLONE_PRONE_DISTRICTS,
+        FLOOD_PRONE_DISTRICTS,
+    )
+    return {
+        "states_count": len(INDIA_STATES),
+        "districts_count": len(INDIA_DISTRICTS),
+        "high_priority_locations": len(HIGH_PRIORITY_LOCATIONS),
+        "cyclone_prone_districts": len(CYCLONE_PRONE_DISTRICTS),
+        "flood_prone_districts": len(FLOOD_PRONE_DISTRICTS),
+        "states": [
+            {"key": k, "name": v["name"], "abbr": v["abbr"], "capital": v["capital"]}
+            for k, v in INDIA_STATES.items()
+        ],
+        "districts": INDIA_DISTRICTS,
+    }
+
+
+@unified_connectors_router.get("/regional-discovery/keywords")
+async def get_regional_discovery_keywords(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return the full multilingual weather keyword dictionary
+    used by the Regional Discovery Engine.
+    """
+    from connectors.weather_discovery.multilingual_keywords import (
+        KEYWORDS, LANGUAGE_META, LANGUAGE_STATE_COVERAGE
+    )
+    return {
+        "events": list(KEYWORDS.keys()),
+        "languages": {
+            lang: {
+                "name": meta["name"],
+                "script": meta["script"],
+                "priority": meta["priority"],
+                "states": LANGUAGE_STATE_COVERAGE.get(lang, []),
+                "keywords_count": sum(len(KEYWORDS[ev].get(lang, [])) for ev in KEYWORDS),
+            }
+            for lang, meta in LANGUAGE_META.items()
+        },
+        "keyword_matrix": {
+            event: {lang: kws for lang, kws in lang_map.items()}
+            for event, lang_map in KEYWORDS.items()
+        },
+    }
+

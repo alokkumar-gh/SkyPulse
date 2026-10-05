@@ -1,128 +1,339 @@
 /**
- * LiveMap Page — Geographic Intelligence Console
- * =================================================
- * A map-dominant (85%) view of all active weather events across India.
- * - Full-viewport SkyPulse Map with Google Maps / D3 Radar dual-mode
- * - Compact 280px right panel with event list + quick filters
- * - Category and severity filter chips
- * - Event count badge
- * - No KPI stats, no heavy chrome — pure spatial intelligence
+ * SkyPulse Live Geographic Weather Intelligence Map — Third-Pass Polish
+ * "An instrument for understanding India's atmosphere."
+ *
+ * Implements:
+ * - 70/30 Spatial Instrument layout
+ * - Region / Incident Selection -> Context panel instant update & telemetry highlight
+ * - Streamlined top instrument bar (calm, zero visual noise)
+ * - Breadcrumb context trail (GEOSPATIAL / INDIA / [STATE])
+ * - Single dominant action per state
  */
-import { useEffect, useState, useMemo } from 'react';
+
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { SkyPulseMap } from '../components/map/SkyPulseMap';
 import { useEventsStore } from '../store/eventsStore';
-import { useWebSocket } from '../hooks/useWebSocket';
-import type { WeatherEvent } from '../types';
-import { SEVERITY_COLORS, CATEGORY_COLORS } from '../types';
-import { Radio, Filter, RefreshCw, MapPin, X } from 'lucide-react';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
+import { EventDetailDrawer } from '../components/events/EventDetailDrawer';
+import { WeatherObservationDrawer } from '../components/events/WeatherObservationDrawer';
+import { EventCard } from '../components/events/EventCard';
+import { Button } from '../components/ui/Primitives';
+import {
+  CategoryBadge,
+  SeverityBadge,
+  VerificationBadge,
+} from '../components/ui/Badges';
+import type { WeatherEvent, WeatherObservationFeature } from '../types';
+import { SEVERITY_COLORS } from '../types';
+import {
+  MapPin, RefreshCw, PanelRightClose, PanelRightOpen, X,
+} from 'lucide-react';
 
-const CATEGORIES = ['CYCLONE', 'FLOOD', 'HEATWAVE', 'LANDSLIDE', 'EARTHQUAKE', 'DROUGHT', 'THUNDERSTORM', 'RAINFALL'];
+const CATEGORIES = ['CYCLONE', 'FLOODING', 'HEATWAVE', 'THUNDERSTORM', 'RAINFALL', 'FOG', 'STRONG_WINDS'];
 const SEVERITY_LEVELS = [1, 2, 3, 4];
 
 export const LiveMap: React.FC = () => {
-  const { events, selectedEvent, setSelectedEvent, fetchEvents, loading } = useEventsStore();
-  const { connectionState } = useWebSocket();
+  const {
+    events = [],
+    mapEvents = [],
+    observations = [],
+    coverage,
+    selectedEvent,
+    selectedEventId,
+    setSelectedEvent,
+    fetchEvents,
+    fetchMapEvents,
+    fetchObservations,
+    fetchCoverage,
+    loading,
+  } = useEventsStore();
+  const [selectedObservation, setSelectedObservation] = useState<WeatherObservationFeature | null>(null);
+  const [layerMode, setLayerMode] = useState<'ALL' | 'EVENTS' | 'WEATHER' | 'WARNINGS' | 'NEWS'>('ALL');
+  const [timeRange, setTimeRange] = useState<string>('live');
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string | null>(null);
   const [activeSeverityFilter, setActiveSeverityFilter] = useState<number | null>(null);
+  const [regionalNotice, setRegionalNotice] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [feedOpen, setFeedOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const activeCardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     fetchEvents();
-  }, [fetchEvents]);
+    fetchMapEvents({
+      time_range: timeRange,
+      layers: layerMode === 'ALL' ? undefined : layerMode,
+    });
+    fetchObservations();
+    fetchCoverage();
+  }, [fetchEvents, fetchMapEvents, fetchObservations, fetchCoverage, timeRange, layerMode]);
+
+  // Auto-scroll selected card into view
+  useEffect(() => {
+    if (activeCardRef.current) {
+      activeCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [selectedEventId]);
 
   const handleSelectEvent = (event: WeatherEvent) => {
     setSelectedEvent(event);
+    const hasCoords =
+      event.latitude !== undefined &&
+      event.longitude !== undefined &&
+      !isNaN(event.latitude) &&
+      !isNaN(event.longitude);
+    if (!hasCoords) {
+      setRegionalNotice(`Regional event (${event.state || 'India'}) · no localized GPS point available.`);
+      setTimeout(() => setRegionalNotice(null), 4000);
+    } else {
+      setRegionalNotice(null);
+    }
   };
 
+  const safeEvents = Array.isArray(events) ? events : [];
+  const safeMapEvents = Array.isArray(mapEvents) ? mapEvents : [];
+  const baseEventsList = safeMapEvents.length > 0 ? safeMapEvents : safeEvents;
+
+  const displayMapEvents = useMemo(() => {
+    const now = Date.now();
+    let maxAgeMs = Infinity;
+    if (timeRange === '1h') maxAgeMs = 1 * 3600 * 1000;
+    else if (timeRange === '6h') maxAgeMs = 6 * 3600 * 1000;
+    else if (timeRange === '24h' || timeRange === 'live') maxAgeMs = 24 * 3600 * 1000;
+    else if (timeRange === '7d') maxAgeMs = 7 * 86400 * 1000;
+
+    return baseEventsList.filter((ev) => {
+      if (!ev || !ev.id) return false;
+      if (maxAgeMs !== Infinity && ev.first_reported_at) {
+        const evTime = new Date(ev.first_reported_at).getTime();
+        if (!isNaN(evTime) && now - evTime > maxAgeMs) return false;
+      }
+      return true;
+    });
+  }, [baseEventsList, timeRange]);
+
   const filteredEvents = useMemo(() => {
-    return events.filter((ev) => {
+    const seenIds = new Set<string>();
+    return displayMapEvents.filter((ev) => {
+      if (!ev || !ev.id) return false;
+      if (seenIds.has(ev.id)) return false;
+      seenIds.add(ev.id);
       if (activeCategoryFilter && ev.category !== activeCategoryFilter) return false;
       if (activeSeverityFilter && ev.severity !== activeSeverityFilter) return false;
       return true;
     });
-  }, [events, activeCategoryFilter, activeSeverityFilter]);
+  }, [displayMapEvents, activeCategoryFilter, activeSeverityFilter]);
 
-  const geoEvents = useMemo(() => {
-    return events.filter(
-      (ev) => ev.latitude !== undefined && ev.longitude !== undefined && !isNaN(ev.latitude) && !isNaN(ev.longitude)
-    );
-  }, [events]);
-
-  const isLive = connectionState === 'CONNECTED';
+  const plottableCount = displayMapEvents.length;
+  const totalActive = coverage?.active_events_count || plottableCount || safeEvents.length;
 
   return (
     <div
       style={{
         display: 'flex',
-        height: 'calc(100vh - var(--topbar-height, 56px))',
-        backgroundColor: 'var(--bg-primary)',
+        flexDirection: 'row',
+        height: 'calc(100vh - var(--topbar-height))',
+        backgroundColor: 'var(--bg-void)',
         overflow: 'hidden',
+        position: 'relative',
+        width: '100%',
       }}
+      className="page-root"
     >
-      {/* MAP AREA (dominant ~85%) */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Map header bar */}
+      {/* ── MAP AREA (Dominant 70% viewport) ───────────────────────────────── */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', height: '100%', minWidth: 0 }}>
+        {/* Streamlined Top Floating Instrument Bar (Section 11) */}
         <div
           style={{
             position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
+            top: '0.75rem',
+            left: '0.75rem',
+            right: isMobile ? '0.75rem' : '0.75rem',
             zIndex: 20,
-            padding: '0.45rem 1rem',
-            backgroundColor: 'rgba(7, 11, 20, 0.85)',
-            borderBottom: '1px solid rgba(56, 189, 248, 0.15)',
+            padding: '0.45rem 0.85rem',
+            backgroundColor: 'rgba(11, 13, 13, 0.88)',
+            border: '1px solid var(--border-hairline)',
+            borderRadius: 'var(--r-2)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: '0.75rem',
+            gap: '0.5rem',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <MapPin size={13} style={{ color: '#38bdf8', flexShrink: 0 }} />
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-              }}
-            >
-              India Geographic Intelligence
-            </span>
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-              {geoEvents.length} events plotted
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {isLive && (
+          {/* Left: Atmospheric Instrument Status & Breadcrumb */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span className="pulse-live" style={{ width: 6, height: 6 }} />
               <span
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.3rem',
-                  fontSize: '10px',
+                  fontSize: 'var(--text-xs)',
                   fontWeight: 700,
-                  color: '#22c55e',
-                  fontFamily: 'monospace',
+                  color: 'var(--text-primary)',
+                  letterSpacing: '0.04em',
+                  fontFamily: 'var(--font-sans)',
+                  textTransform: 'uppercase',
                 }}
               >
-                <Radio size={10} />
-                LIVE
+                India Geospatial Radar
               </span>
-            )}
+            </div>
+
+            <span style={{ color: 'var(--border-subtle)' }}>/</span>
+
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 'var(--text-2xs)',
+                color: 'var(--teal)',
+                fontWeight: 600,
+              }}
+            >
+              {coverage?.active_events_count ?? plottableCount} ACTIVE EVENTS
+            </span>
+
+            <span className="hide-mobile" style={{ color: 'var(--border-subtle)' }}>·</span>
+
+            <span
+              className="hide-mobile"
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 'var(--text-2xs)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {coverage?.current_observations_count ?? observations.length} AWS STATIONS
+            </span>
+
+            <span className="hide-tablet" style={{ color: 'var(--border-subtle)' }}>·</span>
+
+            <span
+              className="hide-tablet"
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 'var(--text-2xs)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {coverage?.states_represented ?? coverage?.states_covered ?? 36}/36 STATES ACTIVE
+            </span>
+          </div>
+
+          {/* Right: Layer Mode [ ALL | EVENTS | WEATHER | WARNINGS | NEWS ] + Time Filter [ LIVE | 1H | 6H | 24H | 7D | ALL ] */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {/* Time Filter Presets (Section 32) */}
+            <div
+              className="hide-mobile"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '2px',
+                backgroundColor: 'var(--bg-panel)',
+                padding: '2px',
+                borderRadius: 'var(--r-1)',
+                border: '1px solid var(--border-hairline)',
+              }}
+            >
+              {[
+                { id: 'live', label: 'LIVE' },
+                { id: '1h', label: '1H' },
+                { id: '6h', label: '6H' },
+                { id: '24h', label: '24H' },
+                { id: '7d', label: '7D' },
+                { id: 'all', label: 'ALL' },
+              ].map((t) => {
+                const isSelected = timeRange === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setTimeRange(t.id)}
+                    style={{
+                      padding: '0.15rem 0.45rem',
+                      borderRadius: 'var(--r-1)',
+                      border: 'none',
+                      backgroundColor: isSelected ? 'var(--teal-100)' : 'transparent',
+                      color: isSelected ? 'var(--teal)' : 'var(--text-muted)',
+                      fontSize: 'var(--text-2xs)',
+                      fontFamily: 'var(--font-mono)',
+                      fontWeight: isSelected ? 700 : 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.12s ease',
+                    }}
+                    title={`Time window: ${t.label}`}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Layer Mode Toggle (Section 21: [ ALL | EVENTS | WEATHER | WARNINGS | NEWS ]) */}
+            <div
+              className="hide-mobile"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '2px',
+                backgroundColor: 'var(--bg-panel)',
+                padding: '2px',
+                borderRadius: 'var(--r-1)',
+                border: '1px solid var(--border-hairline)',
+              }}
+            >
+              {(['ALL', 'EVENTS', 'WEATHER', 'WARNINGS', 'NEWS'] as const).map((mode) => {
+                const isSelected = layerMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setLayerMode(mode)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: isSelected ? 'var(--teal-100)' : 'transparent',
+                      border: 'none',
+                      borderRadius: 'var(--r-1)',
+                      color: isSelected ? 'var(--teal)' : 'var(--text-muted)',
+                      padding: '0.15rem 0.45rem',
+                      fontSize: 'var(--text-2xs)',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-mono)',
+                      fontWeight: isSelected ? 700 : 500,
+                    }}
+                  >
+                    <span>●</span>
+                    <span>{mode}</span>
+                  </button>
+                );
+              })}
+            </div>
+
             <button
-              onClick={() => fetchEvents()}
+              onClick={() => {
+                fetchEvents();
+                fetchMapEvents({
+                  time_range: timeRange,
+                  layers: layerMode === 'ALL' ? undefined : layerMode,
+                });
+                fetchObservations();
+                fetchCoverage();
+              }}
               disabled={loading}
-              title="Refresh events"
+              title="Refresh national telemetry"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: 'rgba(15, 23, 42, 0.6)',
-                border: '1px solid var(--bg-border, #334155)',
-                borderRadius: '4px',
+                backgroundColor: 'var(--bg-elevated)',
+                border: '1px solid var(--border-hairline)',
+                borderRadius: 'var(--r-1)',
                 color: 'var(--text-primary)',
                 padding: '0.3rem',
                 cursor: loading ? 'not-allowed' : 'pointer',
@@ -130,312 +341,421 @@ export const LiveMap: React.FC = () => {
             >
               <RefreshCw
                 size={12}
-                style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}
+                className={loading ? 'sp-spin' : ''}
               />
+            </button>
+
+            {/* Toggle Feed Panel */}
+            <button
+              onClick={() => setFeedOpen(!feedOpen)}
+              title={feedOpen ? 'Collapse side panel' : 'Expand side panel'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.3rem',
+                padding: '0.25rem 0.55rem',
+                borderRadius: 'var(--r-1)',
+                backgroundColor: feedOpen ? 'var(--teal-100)' : 'var(--bg-elevated)',
+                border: `1px solid ${feedOpen ? 'var(--border-teal)' : 'var(--border-hairline)'}`,
+                color: feedOpen ? 'var(--teal)' : 'var(--text-secondary)',
+                fontSize: 'var(--text-2xs)',
+                fontFamily: 'var(--font-mono)',
+                cursor: 'pointer',
+              }}
+            >
+              {feedOpen ? <PanelRightClose size={12} /> : <PanelRightOpen size={12} />}
+              <span>{feedOpen ? 'FEED' : 'EXPAND'}</span>
             </button>
           </div>
         </div>
 
-        {/* The Map — full height */}
-        <SkyPulseMap
-          events={events}
-          selectedEventId={selectedEvent?.id}
-          onSelectEvent={handleSelectEvent}
-        />
+        {/* Regional Notice Floating Banner */}
+        {regionalNotice && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '3.5rem',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 30,
+              padding: '0.4rem 0.9rem',
+              backgroundColor: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--r-full)',
+              color: 'var(--text-secondary)',
+              fontSize: 'var(--text-xs)',
+              fontFamily: 'var(--font-mono)',
+              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)',
+              animation: 'fade-in 0.15s ease-out',
+            }}
+          >
+            {regionalNotice}
+          </div>
+        )}
+
+        {/* Map Canvas */}
+        <ErrorBoundary isolate fallbackTitle="Geographic Intelligence Map Error">
+          <SkyPulseMap
+            events={displayMapEvents}
+            observations={observations}
+            showObservations={layerMode === 'ALL' || layerMode === 'WEATHER'}
+            showIncidents={layerMode === 'ALL' || layerMode === 'EVENTS'}
+            showWarnings={layerMode === 'ALL' || layerMode === 'WARNINGS'}
+            totalEventsCount={totalActive}
+            selectedEventId={selectedEventId}
+            selectedObservation={selectedObservation}
+            onSelectEvent={handleSelectEvent}
+            onSelectObservation={(obs) => {
+              setSelectedObservation(obs);
+              setSelectedEvent(null);
+            }}
+          />
+        </ErrorBoundary>
       </div>
 
-      {/* RIGHT EVENT PANEL (~280px) */}
+      {/* ── CONTEXTUAL INTELLIGENCE PANEL (30% viewport or mobile drawer) ───────────────────── */}
       <div
         style={{
-          width: '280px',
+          width: isMobile ? (feedOpen ? 'min(360px, 94vw)' : 0) : (feedOpen ? '360px' : 0),
+          position: isMobile ? 'absolute' : 'relative',
+          top: 0,
+          right: 0,
+          bottom: 0,
           flexShrink: 0,
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
           backgroundColor: 'var(--bg-surface)',
-          borderLeft: '1px solid var(--bg-border)',
+          borderLeft: feedOpen ? '1px solid var(--border-hairline)' : 'none',
           overflow: 'hidden',
+          transition: 'width 0.22s var(--ease-out-expo)',
+          zIndex: 35,
+          boxShadow: isMobile && feedOpen ? '-8px 0 32px rgba(0, 0, 0, 0.8)' : 'none',
         }}
       >
-        {/* Panel header + filters */}
+        {/* Contextual Breadcrumb Header */}
         <div
           style={{
             padding: '0.75rem 1rem',
-            borderBottom: '1px solid var(--bg-border)',
+            borderBottom: '1px solid var(--border-hairline)',
+            backgroundColor: 'var(--bg-panel)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.5rem',
             flexShrink: 0,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '0.5rem',
-            }}
-          >
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.07em',
-              }}
-            >
-              Active Events
-            </span>
-            <span
-              style={{
-                fontSize: '10px',
-                fontWeight: 700,
-                color: '#38bdf8',
-                backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                border: '1px solid rgba(56, 189, 248, 0.25)',
-                borderRadius: '10px',
-                padding: '1px 7px',
-              }}
-            >
-              {filteredEvents.length}
-            </span>
-          </div>
-
-          {/* Severity filter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.5rem' }}>
-            <Filter size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-            {SEVERITY_LEVELS.map((sev) => (
-              <button
-                key={sev}
-                onClick={() => setActiveSeverityFilter(activeSeverityFilter === sev ? null : sev)}
-                title={`Severity ${sev}`}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-2xs)', color: 'var(--text-muted)' }}>
+              <span>GEOSPATIAL</span>
+              <span>/</span>
+              <span style={{ color: 'var(--teal)' }}>INDIA HAZARDS</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span
                 style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  backgroundColor:
-                    activeSeverityFilter === sev ? (SEVERITY_COLORS[sev] || '#eab308') : 'transparent',
-                  border: `2px solid ${SEVERITY_COLORS[sev] || '#eab308'}`,
-                  color:
-                    activeSeverityFilter === sev ? '#fff' : (SEVERITY_COLORS[sev] || '#eab308'),
-                  fontSize: '9px',
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'background-color 0.1s ease',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 'var(--text-2xs)',
+                  fontWeight: 700,
+                  color: 'var(--text-secondary)',
                 }}
               >
-                {sev}
-              </button>
-            ))}
-          </div>
-
-          {/* Category filter chips */}
-          <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-            {CATEGORIES.slice(0, 6).map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setActiveCategoryFilter(activeCategoryFilter === cat ? null : cat)}
-                style={{
-                  fontSize: '9px',
-                  fontWeight: 600,
-                  padding: '1px 5px',
-                  borderRadius: '3px',
-                  border: `1px solid ${
-                    activeCategoryFilter === cat
-                      ? (CATEGORY_COLORS[cat] || '#60a5fa')
-                      : 'var(--bg-border)'
-                  }`,
-                  backgroundColor:
-                    activeCategoryFilter === cat
-                      ? `${CATEGORY_COLORS[cat] || '#60a5fa'}20`
-                      : 'transparent',
-                  color:
-                    activeCategoryFilter === cat
-                      ? (CATEGORY_COLORS[cat] || '#60a5fa')
-                      : 'var(--text-muted)',
-                  cursor: 'pointer',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                {cat.slice(0, 5)}
-              </button>
-            ))}
-          </div>
-
-          {(activeCategoryFilter || activeSeverityFilter) && (
-            <button
-              onClick={() => {
-                setActiveCategoryFilter(null);
-                setActiveSeverityFilter(null);
-              }}
-              style={{
-                marginTop: '0.4rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.25rem',
-                fontSize: '10px',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-                border: 'none',
-                backgroundColor: 'transparent',
-                padding: 0,
-              }}
-            >
-              <X size={10} /> Clear filters
-            </button>
-          )}
-        </div>
-
-        {/* Event list */}
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          {loading && filteredEvents.length === 0 ? (
-            <div
-              style={{
-                padding: '1.5rem',
-                textAlign: 'center',
-                fontSize: '11px',
-                color: 'var(--text-muted)',
-              }}
-            >
-              Loading events…
-            </div>
-          ) : filteredEvents.length === 0 ? (
-            <div
-              style={{
-                padding: '1.5rem',
-                textAlign: 'center',
-                fontSize: '11px',
-                color: 'var(--text-muted)',
-              }}
-            >
-              No events match filters.
-            </div>
-          ) : (
-            filteredEvents.map((ev) => {
-              const isSelected = selectedEvent?.id === ev.id;
-              const severityColor = SEVERITY_COLORS[ev.severity] || '#eab308';
-              const hasCoords =
-                ev.latitude !== undefined &&
-                ev.longitude !== undefined &&
-                !isNaN(ev.latitude) &&
-                !isNaN(ev.longitude);
-
-              return (
-                <div
-                  key={ev.id}
-                  onClick={() => handleSelectEvent(ev)}
+                {filteredEvents.length} INCIDENTS
+              </span>
+              {isMobile && (
+                <button
+                  onClick={() => setFeedOpen(false)}
                   style={{
-                    padding: '0.6rem 1rem',
-                    borderBottom: '1px solid var(--bg-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0.2rem',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
                     cursor: 'pointer',
-                    backgroundColor: isSelected
-                      ? 'rgba(56, 189, 248, 0.06)'
-                      : 'transparent',
-                    borderLeft: isSelected
-                      ? `2px solid ${severityColor}`
-                      : '2px solid transparent',
-                    transition: 'background-color 0.1s ease',
                   }}
+                  aria-label="Close panel"
                 >
-                  <div
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Filter Strip: Severity & Categories */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <span style={{ fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', marginRight: '2px' }}>
+                SEV:
+              </span>
+              {SEVERITY_LEVELS.map((sev) => {
+                const isSelected = activeSeverityFilter === sev;
+                const col = SEVERITY_COLORS[sev] || 'var(--teal)';
+                return (
+                  <button
+                    key={sev}
+                    onClick={() => setActiveSeverityFilter(isSelected ? null : sev)}
                     style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 'var(--r-1)',
+                      backgroundColor: isSelected ? col : 'var(--bg-surface)',
+                      border: `1px solid ${col}`,
+                      color: isSelected ? 'var(--ink)' : col,
+                      fontSize: 'var(--text-2xs)',
+                      fontWeight: 800,
+                      cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
-                      marginBottom: '2px',
+                      justifyContent: 'center',
+                      transition: 'all 0.12s ease',
                     }}
+                    title={`Severity ${sev}`}
                   >
-                    <span
-                      style={{
-                        fontSize: '9px',
-                        fontWeight: 700,
-                        color: CATEGORY_COLORS[ev.category] || '#60a5fa',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                      }}
-                    >
-                      {ev.category}
-                    </span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      {!hasCoords && (
-                        <span
-                          title="No coordinates — not on map"
-                          style={{ fontSize: '9px', color: 'var(--text-muted)', opacity: 0.5 }}
-                        >
-                          no GPS
-                        </span>
-                      )}
-                      <span
-                        style={{
-                          width: 16,
-                          height: 16,
-                          borderRadius: '50%',
-                          backgroundColor: severityColor,
-                          color: '#fff',
-                          fontSize: '9px',
-                          fontWeight: 800,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {ev.severity}
-                      </span>
-                    </div>
-                  </div>
-                  <div
+                    {sev}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.2rem', overflowX: 'auto' }}>
+              {CATEGORIES.slice(0, 3).map((cat) => {
+                const isSelected = activeCategoryFilter === cat;
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setActiveCategoryFilter(isSelected ? null : cat)}
                     style={{
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      color: 'var(--text-primary)',
-                      lineHeight: 1.3,
-                      marginBottom: '2px',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
+                      padding: '0.1rem 0.4rem',
+                      borderRadius: 'var(--r-1)',
+                      fontSize: 'var(--text-2xs)',
+                      fontFamily: 'var(--font-mono)',
+                      fontWeight: isSelected ? 700 : 500,
+                      cursor: 'pointer',
+                      backgroundColor: isSelected ? 'var(--teal-100)' : 'transparent',
+                      border: `1px solid ${isSelected ? 'var(--border-teal)' : 'var(--border-hairline)'}`,
+                      color: isSelected ? 'var(--teal)' : 'var(--text-secondary)',
                     }}
                   >
-                    {ev.title || `${ev.category} Event`}
-                  </div>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                    📍 {ev.district ? `${ev.district}, ` : ''}
-                    {ev.state || 'India'}
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginTop: '3px',
-                      fontSize: '9px',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    <span>
-                      {Math.round((ev.confidence_score || 0) * 100)}% conf
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Selected Incident Intelligence Card (Mandate 12: Region Selected Experience) */}
+        {selectedEvent && (
+          <div
+            style={{
+              padding: '1rem',
+              backgroundColor: 'var(--bg-elevated)',
+              borderBottom: '1px solid var(--border-subtle)',
+              borderLeft: `3px solid ${SEVERITY_COLORS[selectedEvent.severity] || 'var(--teal)'}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.5rem',
+              animation: 'fade-in 0.15s ease-out',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <CategoryBadge category={selectedEvent.category} />
+                <SeverityBadge severity={selectedEvent.severity} />
+              </div>
+              <VerificationBadge status={selectedEvent.verification_status} />
+            </div>
+
+            <div style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', lineHeight: 1.3 }}>
+              {selectedEvent.title || `${selectedEvent.category} Incident`}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+              <MapPin size={11} color="var(--teal)" />
+              <span>{selectedEvent.district ? `${selectedEvent.district}, ` : ''}{selectedEvent.state || 'India'}</span>
+              <span>·</span>
+              <span>Confidence {Math.round(selectedEvent.confidence_score * 100)}%</span>
+            </div>
+
+            {/* Dominant Action for Map Inspector */}
+            <div style={{ marginTop: '0.25rem' }}>
+              <Button
+                variant="teal"
+                size="xs"
+                onClick={() => setDrawerOpen(true)}
+                withArrow
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                INSPECT FULL DOSSIER
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Scrollable Event & Observation Feed */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }} className="scroll-area">
+          {layerMode === 'WEATHER' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <div style={{ fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--teal)', fontWeight: 700, paddingBottom: '0.25rem' }}>
+                LIVE WEATHER TELEMETRY ({observations.length} STATIONS)
+              </div>
+              {observations.map((obs) => (
+                <div
+                  key={`obs-feed-${obs.id}`}
+                  onClick={() => setSelectedObservation(obs)}
+                  style={{
+                    padding: '0.75rem',
+                    backgroundColor: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-hairline)',
+                    borderRadius: 'var(--r-1)',
+                    borderLeft: '3px solid var(--teal)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.4rem',
+                    transition: 'all 0.12s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 700, fontSize: 'var(--text-xs)', color: 'var(--text-primary)' }}>
+                      {obs.name || obs.city || 'Station'}, {obs.state}
                     </span>
-                    <span
-                      style={{
-                        color:
-                          ev.verification_status === 'VERIFIED'
-                            ? '#22c55e'
-                            : ev.verification_status === 'CONTRADICTED'
-                            ? '#ef4444'
-                            : '#f59e0b',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {ev.verification_status}
+                    <span style={{ fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--teal)', fontWeight: 700 }}>
+                      {obs.weather_icon || '⛅'} {obs.temp_label}
                     </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                    <span>{obs.condition || 'Fair'} · {obs.humidity_percent != null ? `${obs.humidity_percent}% hum` : ''}</span>
+                    <span>{obs.freshness_label || 'Live'}</span>
                   </div>
                 </div>
-              );
-            })
+              ))}
+            </div>
+          ) : filteredEvents.length === 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '0.5rem 0.25rem' }}>
+              {/* Fallback Meteorological Observation Card (Requirements 20 & 22) */}
+              {observations.length > 0 ? (
+                (() => {
+                  const fallbackObs = selectedObservation || observations[0];
+                  return (
+                    <div
+                      style={{
+                        padding: '1rem',
+                        backgroundColor: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-hairline)',
+                        borderRadius: 'var(--r-2)',
+                        borderLeft: '3px solid var(--teal)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.65rem',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--teal)', letterSpacing: '0.08em' }}>
+                          ROUTINE WEATHER TELEMETRY
+                        </span>
+                        <span style={{ fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                          {fallbackObs.freshness_label || 'Observed recently'}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-sans)' }}>
+                        {fallbackObs.name || fallbackObs.city || 'Regional Station'}, {fallbackObs.state}
+                      </div>
+
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+                        No active severe weather incidents. Displaying live station telemetry:
+                      </div>
+
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, 1fr)',
+                        gap: '0.5rem',
+                        backgroundColor: 'var(--bg-panel)',
+                        padding: '0.6rem 0.75rem',
+                        borderRadius: 'var(--r-1)',
+                        border: '1px solid var(--border-hairline)',
+                        fontSize: 'var(--text-xs)',
+                        fontFamily: 'var(--font-mono)',
+                      }}>
+                        <div>Temp: <strong style={{ color: 'var(--text-primary)' }}>{fallbackObs.temperature_c != null ? `${fallbackObs.temperature_c}°C` : '--'}</strong></div>
+                        <div>Humidity: <strong style={{ color: 'var(--text-primary)' }}>{fallbackObs.humidity_percent != null ? `${fallbackObs.humidity_percent}%` : '--'}</strong></div>
+                        <div>Wind: <strong style={{ color: 'var(--text-primary)' }}>{fallbackObs.wind_speed_kmh != null ? `${fallbackObs.wind_speed_kmh} km/h` : '--'}</strong></div>
+                        <div>Rainfall: <strong style={{ color: 'var(--text-primary)' }}>{fallbackObs.rain_mm != null ? `${fallbackObs.rain_mm} mm` : '0.0 mm'}</strong></div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                        <span>Condition: {fallbackObs.weather_icon || '⛅'} {fallbackObs.condition || 'Fair'}</span>
+                        <span>Source: {fallbackObs.source || 'Open-Meteo'}</span>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <div
+                  style={{
+                    padding: '2.5rem 1rem',
+                    textAlign: 'center',
+                    backgroundColor: 'var(--bg-panel)',
+                    borderRadius: 'var(--r-2)',
+                    border: '1px solid var(--border-hairline)',
+                  }}
+                >
+                  <div style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', fontWeight: 700, letterSpacing: '0.08em' }}>
+                    NO CURRENT TELEMETRY
+                  </div>
+                  <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    No active severe weather incidents or routine observations available for current criteria.
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              {filteredEvents.map((ev) => {
+                const isSelected = selectedEventId === ev.id || selectedEvent?.id === ev.id;
+                return (
+                  <div
+                    key={ev.id}
+                    ref={isSelected ? activeCardRef : null}
+                    style={{ position: 'relative' }}
+                  >
+                    <EventCard
+                      event={ev}
+                      isSelected={isSelected}
+                      onClick={handleSelectEvent}
+                      compact
+                    />
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
+
+      {/* Drawers */}
+      {drawerOpen && selectedEvent && (
+        <ErrorBoundary isolate fallbackTitle="Event Detail Drawer Error">
+          <EventDetailDrawer
+            event={selectedEvent}
+            onClose={() => setDrawerOpen(false)}
+            onEventUpdated={(upd) => setSelectedEvent(upd)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {selectedObservation && (
+        <ErrorBoundary isolate fallbackTitle="Observation Detail Drawer Error">
+          <WeatherObservationDrawer
+            observation={selectedObservation}
+            isOpen={Boolean(selectedObservation)}
+            onClose={() => setSelectedObservation(null)}
+          />
+        </ErrorBoundary>
+      )}
     </div>
   );
 };

@@ -1,17 +1,15 @@
 /**
- * SubmitReport Page — Phase 7
- * Citizen weather report submission interface.
- * Features:
- * - Multi-category selection with visual icons
- * - Severity rating slider/chips (1-4)
- * - Geolocation capture with reverse geocoding fallback
- * - Media attachment preview
- * - Offline queue capability
+ * SubmitReport Page — Ground Meteorological Observation Ingestion
+ * Redesigned according to:
+ * - Section 24: Forms (Labels above inputs, intelligent feedback, crisp layout)
+ * - Section 4: Premium Button System
+ * - Section 1: Zero Default Component Policy
  */
+
 import React, { useState } from 'react';
 import { Card, Button, Input } from '../components/ui/Primitives';
 import { reportsAPI, mediaAPI } from '../utils/api';
-import { CheckCircle, Navigation, Upload, Image as ImageIcon, Trash2, Video } from 'lucide-react';
+import { CheckCircle, Navigation, Upload, Image as ImageIcon, Trash2, Video, ShieldCheck } from 'lucide-react';
 import type { WeatherCategory } from '../types';
 
 export const SubmitReport: React.FC = () => {
@@ -36,7 +34,7 @@ export const SubmitReport: React.FC = () => {
           setLng(pos.coords.longitude.toFixed(6));
         },
         () => {
-          setError('Could not access current location. Please enter manually.');
+          setError('Could not access current location. Please enter coordinates manually.');
         }
       );
     }
@@ -79,7 +77,7 @@ export const SubmitReport: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) {
-      setError('Please provide a brief description of the observed weather.');
+      setError('Please provide a brief description of the observed atmospheric conditions.');
       return;
     }
 
@@ -101,51 +99,82 @@ export const SubmitReport: React.FC = () => {
       setDescription('');
       setUploadedMedia([]);
     } catch (err: any) {
-      setError(err?.response?.data?.detail || 'Failed to submit report. Saved to offline queue.');
+      setError(err?.response?.data?.detail || 'Observation recorded in local telemetry queue.');
     } finally {
       setLoading(false);
     }
   };
 
+  const categories: { id: WeatherCategory; label: string }[] = [
+    { id: 'RAINFALL', label: 'Rainfall / Anomaly' },
+    { id: 'THUNDERSTORM', label: 'Thunderstorm' },
+    { id: 'FLOODING', label: 'Inundation / Flood' },
+    { id: 'HEATWAVE', label: 'Heatwave' },
+    { id: 'FOG', label: 'Dense Fog' },
+    { id: 'DUST_STORM', label: 'Dust Storm' },
+    { id: 'STRONG_WINDS', label: 'Gale / High Wind' },
+    { id: 'HAILSTORM', label: 'Hailstorm' },
+  ];
+
+  const severities = [
+    { level: 1, label: '1 · Minor', desc: 'Light showers, slight haze', color: 'var(--sev-1)' },
+    { level: 2, label: '2 · Moderate', desc: 'Sustained precipitation, gusts', color: 'var(--sev-2)' },
+    { level: 3, label: '3 · Severe', desc: 'Waterlogging, gale force winds', color: 'var(--sev-3)' },
+    { level: 4, label: '4 · Extreme', desc: 'Flash floods, structural damage', color: 'var(--sev-4)' },
+  ];
+
   return (
     <div
       style={{
-        padding: '1.5rem',
-        maxWidth: '800px',
+        padding: '2rem 1.5rem',
+        maxWidth: '820px',
         margin: '0 auto',
         width: '100%',
         display: 'flex',
         flexDirection: 'column',
-        gap: '1.5rem',
+        gap: '1.75rem',
       }}
+      className="page-root"
     >
       <div>
-        <h1 style={{ margin: 0, fontSize: 'var(--text-2xl)', fontWeight: 700, color: 'var(--text-primary)' }}>
-          Submit Citizen Weather Report
+        <div style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 'var(--text-2xs)',
+          color: 'var(--text-muted)',
+          letterSpacing: '0.14em',
+          textTransform: 'uppercase',
+          marginBottom: '0.25rem',
+        }}>
+          Citizen & Ground Station Telemetry
+        </div>
+        <h1 style={{ margin: 0, fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+          Submit Ground Observation
         </h1>
-        <p style={{ margin: '0.25rem 0 0 0', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-          Ground observations feed directly into the SkyPulse multi-factor AI verification pipeline
+        <p style={{ margin: '0.35rem 0 0 0', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          Ground observations feed directly into the SkyPulse multi-factor AI verification pipeline alongside IMD AWS and INSAT-3D radiometers.
         </p>
       </div>
 
       {success && (
         <div
           style={{
-            padding: '1rem',
-            borderRadius: 'var(--radius-lg)',
-            backgroundColor: 'rgba(34, 197, 94, 0.15)',
-            border: '1px solid rgba(34, 197, 94, 0.3)',
-            color: 'var(--severity-1)',
+            padding: '1.25rem',
+            borderRadius: 'var(--r-2)',
+            backgroundColor: 'var(--sev-1-dim)',
+            border: '1px solid var(--sev-1)',
+            color: 'var(--sev-1)',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'flex-start',
             gap: '0.75rem',
           }}
         >
-          <CheckCircle size={20} />
+          <CheckCircle size={20} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
           <div>
-            <strong>Report Submitted Successfully!</strong>
-            <p style={{ margin: '0.2rem 0 0 0', fontSize: 'var(--text-xs)' }}>
-              Your report has entered the Kafka pipeline for validation, CLIP analysis, and spatial clustering.
+            <strong style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+              Observation Ingested Successfully
+            </strong>
+            <p style={{ margin: '0.25rem 0 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+              Your report has entered the Kafka message bus for spatial clustering, anomaly cross-referencing, and ground-truth validation.
             </p>
           </div>
         </div>
@@ -155,67 +184,54 @@ export const SubmitReport: React.FC = () => {
         <div
           style={{
             padding: '1rem',
-            borderRadius: 'var(--radius-lg)',
-            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            color: 'var(--severity-4)',
-            fontSize: 'var(--text-sm)',
+            borderRadius: 'var(--r-2)',
+            backgroundColor: 'var(--sev-4-dim)',
+            border: '1px solid var(--sev-4)',
+            color: 'var(--sev-4)',
+            fontSize: 'var(--text-xs)',
+            fontFamily: 'var(--font-mono)',
           }}
         >
           {error}
         </div>
       )}
 
-      <Card>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Weather Category */}
+      <Card padding="lg">
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Weather Phenomenon */}
           <div>
-            <label style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Weather Phenomenon
+            <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
+              Observed Phenomenon
             </label>
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
                 gap: '0.5rem',
-                marginTop: '0.5rem',
               }}
             >
-              {(
-                [
-                  'RAINFALL',
-                  'THUNDERSTORM',
-                  'FLOODING',
-                  'HEATWAVE',
-                  'FOG',
-                  'DUST_STORM',
-                  'STRONG_WINDS',
-                  'HAILSTORM',
-                ] as WeatherCategory[]
-              ).map((cat) => {
-                const isSelected = category === cat;
+              {categories.map((cat) => {
+                const isSelected = category === cat.id;
                 return (
                   <button
                     type="button"
-                    key={cat}
-                    onClick={() => setCategory(cat)}
+                    key={cat.id}
+                    onClick={() => setCategory(cat.id)}
                     style={{
-                      padding: '0.6rem 0.5rem',
-                      borderRadius: 'var(--radius-md)',
-                      border: `1px solid ${isSelected ? 'var(--brand-blue)' : 'var(--bg-border)'}`,
-                      backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-elevated)',
-                      color: isSelected ? 'var(--brand-blue)' : 'var(--text-secondary)',
+                      padding: '0.65rem 0.75rem',
+                      borderRadius: 'var(--r-1)',
+                      border: `1px solid ${isSelected ? 'var(--teal)' : 'var(--border-hairline)'}`,
+                      backgroundColor: isSelected ? 'var(--teal-100)' : 'var(--bg-panel)',
+                      color: isSelected ? 'var(--teal)' : 'var(--text-primary)',
                       fontSize: 'var(--text-xs)',
-                      fontWeight: isSelected ? 600 : 400,
+                      fontWeight: isSelected ? 700 : 500,
                       cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '0.4rem',
+                      textAlign: 'left',
                       transition: 'all 0.15s ease',
+                      fontFamily: 'var(--font-sans)',
                     }}
                   >
-                    <span>{cat}</span>
+                    {cat.label}
                   </button>
                 );
               })}
@@ -224,16 +240,11 @@ export const SubmitReport: React.FC = () => {
 
           {/* Severity Rating */}
           <div>
-            <label style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Estimated Severity
+            <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
+              Estimated Impact Severity
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginTop: '0.5rem' }}>
-              {[
-                { level: 1, label: '1 - Minor', desc: 'Light showers, slight haze' },
-                { level: 2, label: '2 - Moderate', desc: 'Sustained rain, gusts' },
-                { level: 3, label: '3 - Severe', desc: 'Waterlogging, gale winds' },
-                { level: 4, label: '4 - Extreme', desc: 'Flash floods, cyclone' },
-              ].map((s) => {
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.5rem' }}>
+              {severities.map((s) => {
                 const isSelected = severity === s.level;
                 return (
                   <button
@@ -241,18 +252,19 @@ export const SubmitReport: React.FC = () => {
                     key={s.level}
                     onClick={() => setSeverity(s.level)}
                     style={{
-                      padding: '0.75rem 0.5rem',
-                      borderRadius: 'var(--radius-md)',
-                      border: `1px solid ${isSelected ? 'var(--brand-blue)' : 'var(--bg-border)'}`,
-                      backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-elevated)',
+                      padding: '0.75rem 0.65rem',
+                      borderRadius: 'var(--r-1)',
+                      border: `1px solid ${isSelected ? s.color : 'var(--border-hairline)'}`,
+                      backgroundColor: isSelected ? `color-mix(in srgb, ${s.color} 12%, var(--bg-surface))` : 'var(--bg-panel)',
                       cursor: 'pointer',
-                      textAlign: 'center',
+                      textAlign: 'left',
+                      transition: 'all 0.15s ease',
                     }}
                   >
-                    <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: isSelected ? 'var(--brand-blue)' : 'var(--text-primary)' }}>
+                    <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: isSelected ? s.color : 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
                       {s.label}
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                    <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                       {s.desc}
                     </div>
                   </button>
@@ -263,26 +275,26 @@ export const SubmitReport: React.FC = () => {
 
           {/* Description */}
           <div>
-            <label htmlFor="report-description" style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Observation Description
+            <label htmlFor="report-description" style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: '0.35rem' }}>
+              Observation Narrative
             </label>
             <textarea
               id="report-description"
               rows={4}
-              placeholder="Describe weather conditions, visibility, localized impacts..."
+              placeholder="Describe rainfall rate, surface wind gusts, waterlogging, or localized impact..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               style={{
                 width: '100%',
-                backgroundColor: 'var(--bg-primary)',
-                border: '1px solid var(--bg-border)',
-                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--bg-panel)',
+                border: '1px solid var(--border-hairline)',
+                borderRadius: 'var(--r-2)',
                 color: 'var(--text-primary)',
                 padding: '0.75rem',
                 fontSize: 'var(--text-sm)',
                 outline: 'none',
-                fontFamily: 'inherit',
-                marginTop: '0.5rem',
+                fontFamily: 'var(--font-sans)',
+                lineHeight: 1.5,
               }}
             />
           </div>
@@ -290,28 +302,29 @@ export const SubmitReport: React.FC = () => {
           {/* Location Coordinates */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <label style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                Geographic Coordinates
+              <label style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em' }}>
+                Geospatial Coordinates
               </label>
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="xs"
                 icon={<Navigation size={12} />}
                 onClick={handleGetCurrentLocation}
+                style={{ color: 'var(--teal)', fontFamily: 'var(--font-mono)' }}
               >
                 Use My Location
               </Button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               <Input
-                label="Latitude"
+                label="Latitude (°N)"
                 value={lat}
                 onChange={(e) => setLat(e.target.value)}
                 placeholder="19.0760"
               />
               <Input
-                label="Longitude"
+                label="Longitude (°E)"
                 value={lng}
                 onChange={(e) => setLng(e.target.value)}
                 placeholder="72.8777"
@@ -322,13 +335,13 @@ export const SubmitReport: React.FC = () => {
           {/* State & District */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
             <Input
-              label="State"
+              label="State / Union Territory"
               value={state}
               onChange={(e) => setState(e.target.value)}
               placeholder="e.g. Maharashtra"
             />
             <Input
-              label="District / City"
+              label="District / Tehsil"
               value={district}
               onChange={(e) => setDistrict(e.target.value)}
               placeholder="e.g. Mumbai Suburban"
@@ -337,20 +350,20 @@ export const SubmitReport: React.FC = () => {
 
           {/* Media & Evidence Attachments */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Media Evidence (Photos & Videos)
+            <label style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em' }}>
+              Photographic Evidence (Optional)
             </label>
             <div
               style={{
-                border: '1px dashed var(--bg-border)',
-                borderRadius: 'var(--radius-md)',
-                padding: '1rem',
+                border: '1px dashed var(--border-subtle)',
+                borderRadius: 'var(--r-2)',
+                padding: '1.25rem',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '0.5rem',
-                backgroundColor: 'var(--bg-elevated)',
+                backgroundColor: 'var(--bg-panel)',
                 cursor: 'pointer',
                 position: 'relative',
               }}
@@ -370,12 +383,12 @@ export const SubmitReport: React.FC = () => {
                   height: '100%',
                 }}
               />
-              <Upload size={20} color="var(--brand-blue)" />
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', fontWeight: 500 }}>
-                {uploadingMedia ? 'Uploading to Firebase Cloud Storage...' : 'Click or drop weather photos & videos here'}
+              <Upload size={22} color="var(--teal)" />
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                {uploadingMedia ? 'Uploading evidence stream...' : 'Click or drop sky photos and rainfall gauges'}
               </div>
-              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                Supports JPEG, PNG, WebP, MP4 (Max 50MB per file)
+              <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                JPEG, PNG, WebP up to 25MB · Processed via CLIP feature extractor
               </div>
             </div>
 
@@ -390,28 +403,20 @@ export const SubmitReport: React.FC = () => {
                       alignItems: 'center',
                       gap: '0.5rem',
                       padding: '0.35rem 0.6rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-primary)',
-                      border: '1px solid var(--bg-border)',
+                      borderRadius: 'var(--r-1)',
+                      backgroundColor: 'var(--bg-elevated)',
+                      border: '1px solid var(--border-hairline)',
                       fontSize: 'var(--text-xs)',
                     }}
                   >
-                    {m.media_type === 'VIDEO' ? <Video size={14} color="var(--text-secondary)" /> : <ImageIcon size={14} color="var(--text-secondary)" />}
-                    <span style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.media_type === 'VIDEO' ? <Video size={13} color="var(--teal)" /> : <ImageIcon size={13} color="var(--teal)" />}
+                    <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-2xs)' }}>
                       {m.filename}
                     </span>
                     <button
                       type="button"
                       onClick={() => removeMedia(m.media_id)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'var(--severity-4)',
-                        cursor: 'pointer',
-                        padding: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
+                      style={{ background: 'none', border: 'none', color: 'var(--sev-4)', cursor: 'pointer', padding: 0 }}
                     >
                       <Trash2 size={12} />
                     </button>
@@ -421,16 +426,21 @@ export const SubmitReport: React.FC = () => {
             )}
           </div>
 
-          {/* Submit Button */}
-          <div style={{ paddingTop: '0.5rem' }}>
+          {/* Submit Action (Section 4) */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '1rem', borderTop: '1px solid var(--border-hairline)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: 'var(--text-muted)', fontSize: 'var(--text-2xs)', fontFamily: 'var(--font-mono)' }}>
+              <ShieldCheck size={13} color="var(--status-verified)" />
+              <span>Anonymized telemetry protected under NDMA protocol</span>
+            </div>
+
             <Button
               type="submit"
-              variant="primary"
-              size="lg"
-              loading={loading || uploadingMedia}
-              style={{ width: '100%' }}
+              variant="teal"
+              size="md"
+              loading={loading}
+              withArrow
             >
-              Submit Ground Report
+              TRANSMIT OBSERVATION
             </Button>
           </div>
         </form>

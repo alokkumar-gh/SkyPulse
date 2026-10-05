@@ -143,9 +143,20 @@ class EventDNASnapshot(BaseModel):
     """Compact DNA fingerprint for quick operational rendering and dashboards."""
     event_id: str
     event_type: str
+    phenomenon: Optional[str] = None
+    event_nature: str = "OBSERVATION"
+    temporal_scope: str = "CURRENT"
+    is_current_observation: bool = True
+    is_current_observation_supported: bool = True
+    evidence_basis: str = "CURRENT_OBSERVATION"
     status: str
     severity: int = 1
     source_count: int = 0
+    independent_source_count: int = 0
+    corroborating_source_count: int = 0
+    source_claim_label: str = "SINGLE-SOURCE SIGNAL"
+    confidence_tier_label: str = "MODERATE"
+    observation_status_label: str = "CURRENT SUPPORTING OBSERVATION: YES"
     evidence_count: int = 0
     conflict_count: int = 0
     duplicate_count: int = 0
@@ -163,6 +174,16 @@ class EventDNAResponse(BaseModel):
     event_id: str
     event_type: str
     sub_category: Optional[str] = None
+    phenomenon: Optional[str] = None
+    event_nature: str = "OBSERVATION"
+    temporal_scope: str = "CURRENT"
+    is_current_observation: bool = True
+    is_current_observation_supported: bool = True
+    observation_summary: Optional[str] = None
+    observation_status_label: str = "CURRENT SUPPORTING OBSERVATION: YES"
+    source_claim_label: str = "SINGLE-SOURCE SIGNAL"
+    confidence_tier_label: str = "MODERATE"
+    evidence_basis: str = "CURRENT_OBSERVATION"
     status: str
     lifecycle_phase: str  # DETECTED, EMERGING, SUPPORTED, VERIFIED, PROPAGATING, SUBSIDING, RESOLVED, CONTRADICTED
     severity: int = 1

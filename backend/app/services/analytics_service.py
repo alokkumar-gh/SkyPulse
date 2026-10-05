@@ -25,10 +25,21 @@ async def get_national_analytics(
     if not to_date:
         to_date = now
 
+    from sqlalchemy import or_
+
     event_filter = and_(
         WeatherEvent.is_deleted == False,
-        WeatherEvent.first_reported_at >= from_date,
-        WeatherEvent.first_reported_at <= to_date,
+        or_(
+            and_(
+                WeatherEvent.first_reported_at >= from_date,
+                WeatherEvent.first_reported_at <= to_date,
+            ),
+            and_(
+                WeatherEvent.last_updated_at >= from_date,
+                WeatherEvent.last_updated_at <= to_date,
+            ),
+            WeatherEvent.is_active == True,
+        ),
     )
 
     # 1. Total events
@@ -41,7 +52,10 @@ async def get_national_analytics(
     active_events_res = await db.execute(
         select(func.count())
         .select_from(WeatherEvent)
-        .where(event_filter, WeatherEvent.is_active == True)
+        .where(
+            WeatherEvent.is_deleted == False,
+            WeatherEvent.is_active == True,
+        )
     )
     active_events = active_events_res.scalar() or 0
 

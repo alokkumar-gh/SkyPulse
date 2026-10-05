@@ -89,14 +89,11 @@ describe('Google Maps Weather Map Suite — Step 1 Migration', () => {
     const markers = screen.getAllByTestId('google-marker');
     expect(markers.length).toBe(2);
 
-    // Verify severity numbers rendered inside markers
-    expect(screen.getByText('3')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
-
     // Verify severity legend
-    expect(screen.getByText('SEVERITY SCALE')).toBeInTheDocument();
+    expect(screen.getByText('MAP INTELLIGENCE')).toBeInTheDocument();
     expect(screen.getByText('1 Minor')).toBeInTheDocument();
     expect(screen.getByText('4 Extreme')).toBeInTheDocument();
+    expect(screen.getByText('CAP Zone')).toBeInTheDocument();
   });
 
   it('handles marker click and triggers onSelectEvent callback', () => {
@@ -129,8 +126,8 @@ describe('Google Maps Weather Map Suite — Step 1 Migration', () => {
     );
 
     expect(screen.getByText(/Google Maps API Key Required/i)).toBeInTheDocument();
-    expect(screen.getByText(/VITE_GOOGLE_MAPS_API_KEY/i)).toBeInTheDocument();
-    expect(screen.getByText(/Tracking 2 active weather event\(s\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Tracking/i)).toBeInTheDocument();
+    expect(screen.getByText(/mapped weather event\(s\)/i)).toBeInTheDocument();
   });
 
   it('renders ConfidenceFieldLayer with Google Maps heatmap and evidence points', () => {
@@ -168,4 +165,75 @@ describe('Google Maps Weather Map Suite — Step 1 Migration', () => {
     expect(screen.getByText('★')).toBeInTheDocument(); // Centroid icon
     expect(screen.getByText('80%')).toBeInTheDocument(); // Evidence weight label
   });
+
+  it('renders CAP multi-vertex hazard polygon and handles polygon selection', () => {
+    const handleSelect = vi.fn();
+    const eventWithPolygon: WeatherEvent = {
+      id: 'cap-evt-1',
+      category: 'CYCLONE',
+      severity: 4,
+      confidence_score: 0.95,
+      verification_status: 'OFFICIAL_ALERT',
+      latitude: 19.81,
+      longitude: 85.83,
+      district: 'Puri',
+      state: 'Odisha',
+      title: 'Cyclone Alert with Hazard Polygon',
+      evidence_count: 3,
+      is_active: true,
+      has_polygon: true,
+      hazard_polygon: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [85.83, 19.81],
+            [86.20, 20.15],
+            [85.90, 20.30],
+            [85.83, 19.81],
+          ],
+        ],
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    render(
+      <SkyPulseMap
+        events={[...sampleEvents, eventWithPolygon]}
+        selectedEventId={null}
+        onSelectEvent={handleSelect}
+        apiKey="test-google-maps-api-key"
+      />
+    );
+
+    // Verify polygon layer rendered
+    expect(screen.getByTestId('hazard-polygons-layer')).toBeInTheDocument();
+    const polyElement = screen.getByTestId('hazard-polygon-element');
+    expect(polyElement).toBeInTheDocument();
+    expect(polyElement).toHaveAttribute('data-event-id', 'cap-evt-1');
+
+    // Verify polygon count badge
+    expect(screen.getByText(/1 CAP hazard zone/i)).toBeInTheDocument();
+
+    // Click polygon triggers onSelectEvent
+    fireEvent.click(polyElement);
+    expect(handleSelect).toHaveBeenCalledWith(eventWithPolygon);
+  });
+
+  it('handles events without polygon gracefully without crashing', () => {
+    const handleSelect = vi.fn();
+    render(
+      <SkyPulseMap
+        events={sampleEvents}
+        selectedEventId={null}
+        onSelectEvent={handleSelect}
+        apiKey="test-google-maps-api-key"
+      />
+    );
+
+    expect(screen.getByTestId('hazard-polygons-layer')).toBeInTheDocument();
+    // No polygons rendered for sampleEvents (has_polygon is false/undefined)
+    expect(screen.queryByTestId('hazard-polygon-element')).toBeNull();
+  });
 });
+

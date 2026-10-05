@@ -48,17 +48,13 @@ export const WSConnectionStatus = {
 export type WSConnectionStatus = (typeof WSConnectionStatus)[keyof typeof WSConnectionStatus];
 
 export function getWSBaseUrl(): string {
-  const envUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_WS_URL;
+  const envUrl = import.meta.env.VITE_WS_URL;
   if (envUrl) {
     if (envUrl.startsWith('http://')) return envUrl.replace(/^http:\/\//, 'ws://');
     if (envUrl.startsWith('https://')) return envUrl.replace(/^https:\/\//, 'wss://');
     return envUrl;
   }
-  if (typeof window !== 'undefined') {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}`;
-  }
-  return 'ws://localhost:8000';
+  return 'wss://skypulse-backend-62479304097.asia-south1.run.app/ws/events';
 }
 
 const MAX_RECONNECT_ATTEMPTS = 10;

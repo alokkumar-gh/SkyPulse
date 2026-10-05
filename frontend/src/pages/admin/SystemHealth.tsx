@@ -25,30 +25,19 @@ import {
 export const SystemHealthPage: React.FC = () => {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchHealth = async (isManual = false) => {
     try {
       if (isManual) setLoading(true);
+      setError(null);
       const res = await adminAPI.systemHealth();
       setHealth(res as unknown as SystemHealth);
       setLastUpdated(new Date());
-    } catch {
-      // Fallback
-      setHealth({
-        status: 'ok',
-        database_status: 'HEALTHY',
-        kafka_status: 'HEALTHY',
-        redis_status: 'HEALTHY',
-        opensearch_status: 'HEALTHY',
-        neo4j_status: 'HEALTHY',
-        ai_worker_status: 'HEALTHY',
-        ingestion_rate_per_minute: 24,
-        processing_queue_depth: 0,
-        error_rate_last_hour: 0.0,
-      });
-      setLastUpdated(new Date());
+    } catch (err: any) {
+      setError(err?.message || 'Failed to fetch real-time infrastructure telemetry');
     } finally {
       setLoading(false);
     }
@@ -175,6 +164,27 @@ export const SystemHealthPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {error && (
+        <div
+          style={{
+            padding: '0.75rem 1rem',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: 'var(--severity-4)',
+            fontSize: 'var(--text-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>Telemetry Unreachable: {error}</span>
+          <Button variant="secondary" size="sm" onClick={() => fetchHealth(true)}>
+            Retry Telemetry
+          </Button>
+        </div>
+      )}
 
       {/* Metrics Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>

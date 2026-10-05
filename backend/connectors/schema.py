@@ -6,12 +6,36 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class ConnectorStatusEnum(str, Enum):
+    LIVE = "LIVE"
     HEALTHY = "HEALTHY"
     DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
+    AUTH_ERROR = "AUTH_ERROR"
+    RATE_LIMITED = "RATE_LIMITED"
     NOT_CONFIGURED = "NOT_CONFIGURED"
     ERROR = "ERROR"
     DISABLED = "DISABLED"
     DEMO = "DEMO"
+
+
+class CommonConnectorHealthReport(BaseModel):
+    """Standardized connector health and diagnostic model with sanitized error reporting."""
+    source: str
+    enabled: bool = True
+    configured: bool = True
+    reachable: bool = False
+    authenticated: Optional[bool] = None
+    healthy: bool = False
+    status: str = "UNAVAILABLE"  # LIVE | DEGRADED | UNAVAILABLE | AUTH_ERROR | RATE_LIMITED | NOT_CONFIGURED
+    last_success_at: Optional[datetime] = None
+    last_attempt_at: Optional[datetime] = None
+    consecutive_failures: int = 0
+    records_last_success: int = 0
+    last_error_code: Optional[str] = None
+    last_error_message: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 
 class ConnectorMetrics(BaseModel):

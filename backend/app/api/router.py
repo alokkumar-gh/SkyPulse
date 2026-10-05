@@ -19,6 +19,9 @@ from app.api.v1.connectors import (
     unified_connectors_router,
 )
 
+# Weather Intelligence Feed & Auto-Fetch
+from app.api.v1.weather import router as weather_router
+
 # Phase 6
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.alerts import router as alerts_router
@@ -30,6 +33,7 @@ from app.api.v1.ai import router as ai_router
 api_router = APIRouter(prefix="/api/v1")
 
 api_router.include_router(auth_router)
+api_router.include_router(weather_router)
 api_router.include_router(reports_router)
 api_router.include_router(events_router)
 api_router.include_router(emerging_events_router)

@@ -6,6 +6,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 // Route-level code splitting
 const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -42,60 +43,67 @@ function PageLoader() {
         backgroundColor: 'var(--bg-primary)',
         color: 'var(--text-secondary)',
         fontSize: 'var(--text-sm)',
+        fontFamily: 'var(--font-mono, monospace)',
+        letterSpacing: '0.04em',
       }}
     >
-      Loading intelligence view...
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <span className="pulse-live" style={{ width: 6, height: 6 }} />
+        <span>Loading intelligence view...</span>
+      </div>
     </div>
   );
 }
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          {/* Public Login Route */}
-          <Route path="/login" element={<Login />} />
+    <ErrorBoundary fallbackTitle="Application Interface Error">
+      <BrowserRouter>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            {/* Public Login Route */}
+            <Route path="/login" element={<Login />} />
 
-          {/* Phase 9: Dedicated Analyst Layout & Routes */}
-          <Route path="/analyst" element={<AnalystLayout />}>
-            <Route index element={<Navigate to="/analyst/queue" replace />} />
-            <Route path="queue" element={<AnalystQueue />} />
-            <Route path="events" element={<Events />} />
-            <Route path="events/:eventId" element={<AnalystEventDetail />} />
-            <Route path="clusters" element={<AnalystQueue />} />
-            <Route path="alerts" element={<Alerts />} />
-          </Route>
+            {/* Phase 9: Dedicated Analyst Layout & Routes */}
+            <Route path="/analyst" element={<AnalystLayout />}>
+              <Route index element={<Navigate to="/analyst/queue" replace />} />
+              <Route path="queue" element={<AnalystQueue />} />
+              <Route path="events" element={<Events />} />
+              <Route path="events/:eventId" element={<AnalystEventDetail />} />
+              <Route path="clusters" element={<AnalystQueue />} />
+              <Route path="alerts" element={<Alerts />} />
+            </Route>
 
-          {/* Phase 9: Dedicated Admin Layout & Routes */}
-          <Route path="/admin" element={<AdminLayout />}>
-            <Route index element={<Navigate to="/admin/health" replace />} />
-            <Route path="health" element={<SystemHealthPage />} />
-            <Route path="connectors" element={<ConnectorManagement />} />
-            <Route path="users" element={<UserManagement />} />
-            <Route path="audit" element={<AuditLogPage />} />
-            <Route path="flagged-reports" element={<FlaggedReportsPage />} />
-          </Route>
+            {/* Phase 9: Dedicated Admin Layout & Routes */}
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<Navigate to="/admin/health" replace />} />
+              <Route path="health" element={<SystemHealthPage />} />
+              <Route path="connectors" element={<ConnectorManagement />} />
+              <Route path="users" element={<UserManagement />} />
+              <Route path="audit" element={<AuditLogPage />} />
+              <Route path="flagged-reports" element={<FlaggedReportsPage />} />
+            </Route>
 
-          {/* Core Layout Routes */}
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/map" element={<LiveMap />} />
-            <Route path="/events" element={<Events />} />
-            <Route path="/events/:eventId" element={<AnalystEventDetail />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/sources" element={<Sources />} />
-            <Route path="/dweg" element={<DWEGView />} />
-            <Route path="/verification" element={<VerificationQueue />} />
-            <Route path="/submit" element={<SubmitReport />} />
-          </Route>
+            {/* Core Layout Routes */}
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/map" element={<LiveMap />} />
+              <Route path="/events" element={<Events />} />
+              <Route path="/events/:eventId" element={<AnalystEventDetail />} />
+              <Route path="/analytics" element={<Analytics />} />
+              <Route path="/alerts" element={<Alerts />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/sources" element={<Sources />} />
+              <Route path="/dweg" element={<DWEGView />} />
+              <Route path="/verification" element={<VerificationQueue />} />
+              <Route path="/submit" element={<SubmitReport />} />
+            </Route>
 
-          {/* Catch-all redirect */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </BrowserRouter>
+            {/* Catch-all redirect */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

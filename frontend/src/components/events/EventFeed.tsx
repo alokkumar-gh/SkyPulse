@@ -33,14 +33,27 @@ export const EventFeed: React.FC<EventFeedProps> = ({
 
   const filteredEvents = useMemo(() => {
     return events.filter((ev) => {
-      // Search matching
+      // Search matching across all factual fields
       if (search.trim()) {
         const query = search.toLowerCase();
-        const matchesTitle = ev.title?.toLowerCase().includes(query);
-        const matchesCategory = ev.category.toLowerCase().includes(query);
-        const matchesState = ev.state?.toLowerCase().includes(query);
-        const matchesDistrict = ev.district?.toLowerCase().includes(query);
-        if (!matchesTitle && !matchesCategory && !matchesState && !matchesDistrict) {
+        const matches = [
+          ev.title,
+          ev.summary,
+          ev.description,
+          ev.category,
+          ev.sub_category,
+          ev.state,
+          ev.district,
+          ev.city,
+          ev.source,
+          ev.location?.city,
+          ev.location?.district,
+          ev.location?.state,
+        ]
+          .filter(Boolean)
+          .some((val) => String(val).toLowerCase().includes(query));
+
+        if (!matches) {
           return false;
         }
       }
@@ -72,98 +85,98 @@ export const EventFeed: React.FC<EventFeedProps> = ({
         flexDirection: 'column',
         height: '100%',
         backgroundColor: 'var(--bg-surface)',
-        borderLeft: '1px solid var(--bg-border)',
         overflow: 'hidden',
       }}
     >
       {/* Feed Header */}
       <div
         style={{
-          padding: '1rem',
-          borderBottom: '1px solid var(--bg-border)',
+          padding: '0.75rem 1rem',
+          borderBottom: '1px solid var(--border-hairline)',
           display: 'flex',
           flexDirection: 'column',
-          gap: '0.75rem',
+          gap: '0.625rem',
         }}
       >
         {/* Mode Switcher */}
-        <div style={{ display: 'flex', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--radius-md)', padding: '2px', border: '1px solid var(--bg-border)' }}>
+        <div style={{ display: 'flex', background: 'var(--bg-panel)', borderRadius: 'var(--r-2)', padding: '2px', border: '1px solid var(--border-hairline)' }}>
           <button
             onClick={() => setViewMode('canonical')}
             style={{
               flex: 1,
-              padding: '0.35rem 0.5rem',
-              borderRadius: 'var(--radius-sm)',
+              padding: '0.3rem 0.5rem',
+              borderRadius: 'var(--r-1)',
               border: 'none',
               cursor: 'pointer',
-              fontSize: 'var(--text-xs)',
+              fontSize: 'var(--text-2xs)',
               fontWeight: viewMode === 'canonical' ? 600 : 400,
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
               backgroundColor: viewMode === 'canonical' ? 'var(--bg-elevated)' : 'transparent',
-              color: viewMode === 'canonical' ? 'var(--text-primary)' : 'var(--text-secondary)',
-              transition: 'all 0.15s ease',
+              color: viewMode === 'canonical' ? 'var(--teal)' : 'var(--text-muted)',
+              transition: 'all var(--t-fast)',
             }}
           >
-            Live Events ({events.length})
+            Events ({events.length})
           </button>
           <button
             onClick={() => setViewMode('emerging')}
             style={{
               flex: 1,
-              padding: '0.35rem 0.5rem',
-              borderRadius: 'var(--radius-sm)',
+              padding: '0.3rem 0.5rem',
+              borderRadius: 'var(--r-1)',
               border: 'none',
               cursor: 'pointer',
-              fontSize: 'var(--text-xs)',
+              fontSize: 'var(--text-2xs)',
               fontWeight: viewMode === 'emerging' ? 600 : 400,
-              backgroundColor: viewMode === 'emerging' ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
-              color: viewMode === 'emerging' ? '#f97316' : 'var(--text-secondary)',
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              backgroundColor: viewMode === 'emerging' ? 'var(--sev-3-dim)' : 'transparent',
+              color: viewMode === 'emerging' ? 'var(--sev-3)' : 'var(--text-muted)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '0.25rem',
-              transition: 'all 0.15s ease',
+              transition: 'all var(--t-fast)',
             }}
           >
-            <Zap size={12} />
-            <span>Emerging Signals</span>
+            <Zap size={11} />
+            <span>Emerging</span>
           </button>
         </div>
 
         {viewMode === 'canonical' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--severity-1)',
-                    animation: 'pulse 1.5s infinite',
-                  }}
-                />
-                <h3 style={{ margin: 0, fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span className="pulse-live" style={{ width: 6, height: 6 }} />
+                <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>
                   Live Event Feed
-                </h3>
+                </span>
               </div>
               <span
                 style={{
-                  fontSize: 'var(--text-xs)',
-                  padding: '0.15rem 0.5rem',
-                  borderRadius: 'var(--radius-full)',
-                  backgroundColor: 'var(--bg-elevated)',
-                  color: 'var(--text-secondary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 'var(--text-2xs)',
+                  padding: '0.1rem 0.45rem',
+                  borderRadius: 'var(--r-full)',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-hairline)',
+                  color: 'var(--text-muted)',
+                  letterSpacing: '0.04em',
                 }}
               >
-                {filteredEvents.length} events
+                {filteredEvents.length}
               </span>
             </div>
 
             {/* Search */}
             <div style={{ position: 'relative' }}>
               <Search
-                size={14}
-                style={{ position: 'absolute', left: '0.65rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}
+                size={12}
+                style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}
               />
               <input
                 type="text"
@@ -172,98 +185,57 @@ export const EventFeed: React.FC<EventFeedProps> = ({
                 onChange={(e) => setSearch(e.target.value)}
                 style={{
                   width: '100%',
-                  backgroundColor: 'var(--bg-primary)',
-                  border: '1px solid var(--bg-border)',
-                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: 'var(--bg-panel)',
+                  border: '1px solid var(--border-hairline)',
+                  borderRadius: 'var(--r-2)',
                   color: 'var(--text-primary)',
-                  padding: '0.4rem 0.6rem 0.4rem 2rem',
+                  padding: '0.4rem 0.6rem 0.4rem 1.875rem',
                   fontSize: 'var(--text-xs)',
                   outline: 'none',
+                  fontFamily: 'var(--font-sans)',
+                  transition: 'border-color var(--t-fast)',
                 }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--border-teal)'; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-hairline)'; }}
               />
             </div>
 
             {/* Filter Pills */}
-            <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '2px' }}>
-              <button
-                onClick={() => setQuickFilter('all')}
-                style={{
-                  padding: '0.25rem 0.55rem',
-                  borderRadius: 'var(--radius-full)',
-                  fontSize: 'var(--text-xs)',
-                  fontWeight: 500,
-                  border: 'none',
-                  cursor: 'pointer',
-                  backgroundColor: quickFilter === 'all' ? 'var(--brand-blue)' : 'var(--bg-elevated)',
-                  color: quickFilter === 'all' ? '#fff' : 'var(--text-secondary)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                All ({events.length})
-              </button>
-
-              <button
-                onClick={() => setQuickFilter('severe')}
-                style={{
-                  padding: '0.25rem 0.55rem',
-                  borderRadius: 'var(--radius-full)',
-                  fontSize: 'var(--text-xs)',
-                  fontWeight: 500,
-                  border: 'none',
-                  cursor: 'pointer',
-                  backgroundColor: quickFilter === 'severe' ? 'var(--severity-4)' : 'var(--bg-elevated)',
-                  color: quickFilter === 'severe' ? '#fff' : 'var(--severity-4)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <Flame size={12} />
-                Severe ({severeCount})
-              </button>
-
-              <button
-                onClick={() => setQuickFilter('unverified')}
-                style={{
-                  padding: '0.25rem 0.55rem',
-                  borderRadius: 'var(--radius-full)',
-                  fontSize: 'var(--text-xs)',
-                  fontWeight: 500,
-                  border: 'none',
-                  cursor: 'pointer',
-                  backgroundColor: quickFilter === 'unverified' ? 'var(--status-review)' : 'var(--bg-elevated)',
-                  color: quickFilter === 'unverified' ? '#fff' : 'var(--status-review)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <ShieldAlert size={12} />
-                Review ({unverifiedCount})
-              </button>
-
-              <button
-                onClick={() => setQuickFilter('verified')}
-                style={{
-                  padding: '0.25rem 0.55rem',
-                  borderRadius: 'var(--radius-full)',
-                  fontSize: 'var(--text-xs)',
-                  fontWeight: 500,
-                  border: 'none',
-                  cursor: 'pointer',
-                  backgroundColor: quickFilter === 'verified' ? 'var(--status-verified)' : 'var(--bg-elevated)',
-                  color: quickFilter === 'verified' ? '#fff' : 'var(--status-verified)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <CheckCircle2 size={12} />
-                Verified
-              </button>
+            <div style={{ display: 'flex', gap: '0.3rem', overflowX: 'auto', paddingBottom: '2px', scrollbarWidth: 'none' }}>
+              {([
+                { id: 'all', label: `All ${events.length}`, icon: null, activeColor: 'var(--teal)', activeBg: 'var(--teal-100)', activeBorder: 'var(--border-teal)' },
+                { id: 'severe', label: `Severe ${severeCount}`, icon: <Flame size={10} />, activeColor: 'var(--sev-4)', activeBg: 'var(--sev-4-dim)', activeBorder: 'rgba(239,68,68,0.25)' },
+                { id: 'unverified', label: `Review ${unverifiedCount}`, icon: <ShieldAlert size={10} />, activeColor: 'var(--sev-3)', activeBg: 'var(--sev-3-dim)', activeBorder: 'rgba(249,115,22,0.25)' },
+                { id: 'verified', label: `Verified`, icon: <CheckCircle2 size={10} />, activeColor: 'var(--sev-1)', activeBg: 'var(--sev-1-dim)', activeBorder: 'rgba(34,197,94,0.25)' },
+              ] as const).map(({ id, label, icon, activeColor, activeBg, activeBorder }) => {
+                const isActive = quickFilter === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setQuickFilter(id as QuickFilter)}
+                    style={{
+                      padding: '0.2rem 0.55rem',
+                      borderRadius: 'var(--r-full)',
+                      fontSize: 'var(--text-2xs)',
+                      fontWeight: isActive ? 600 : 500,
+                      fontFamily: 'var(--font-mono)',
+                      letterSpacing: '0.04em',
+                      border: `1px solid ${isActive ? activeBorder : 'var(--border-hairline)'}`,
+                      cursor: 'pointer',
+                      backgroundColor: isActive ? activeBg : 'transparent',
+                      color: isActive ? activeColor : 'var(--text-muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                      whiteSpace: 'nowrap',
+                      transition: 'all var(--t-fast)',
+                    }}
+                  >
+                    {icon}
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </>
         )}

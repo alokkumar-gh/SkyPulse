@@ -1,26 +1,21 @@
 /**
- * Sidebar — Phase 7
- * Role-dependent navigation sidebar.
- * Collapses to icons on tablet; hidden on mobile.
+ * SkyPulse Navigation Sidebar — Redesign
+ * "Intelligence Operations" vertical navigation.
+ *
+ * Design:
+ * - Warm-dark surface with editorial typography
+ * - Active state: thin teal left accent + subtle teal fill
+ * - Section labels: monospace, restrained
+ * - Collapsible to 48px icon rail
+ * - Quiet by design — never competes with content
  */
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard,
-  Map,
-  Zap,
-  BarChart2,
-  GitBranch,
-  Bell,
-  Database,
-  FileText,
-  Settings,
-  ChevronLeft,
-  ChevronRight,
-  Shield,
-  Users,
-  Activity,
-  ClipboardList,
+  LayoutDashboard, Map, Zap, BarChart2, GitBranch,
+  Bell, Database, FileText, Shield, Users, Activity,
+  ClipboardList, Settings, ChevronLeft, ChevronRight,
+  Radio, Layers,
 } from 'lucide-react';
 import { useAuthStore, canAnalyst, canAdmin } from '../../store/authStore';
 
@@ -33,93 +28,200 @@ interface NavItem {
   requireAdmin?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { to: '/', icon: <LayoutDashboard size={18} />, label: 'Dashboard' },
-  { to: '/map', icon: <Map size={18} />, label: 'Live Map' },
-  { to: '/events', icon: <Zap size={18} />, label: 'Events' },
-  { to: '/analytics', icon: <BarChart2 size={18} />, label: 'Analytics' },
-  { to: '/alerts', icon: <Bell size={18} />, label: 'Alerts' },
-  { to: '/reports', icon: <FileText size={18} />, label: 'Reports' },
-  { to: '/sources', icon: <Database size={18} />, label: 'Sources' },
-  // Analyst+
-  { to: '/dweg', icon: <GitBranch size={18} />, label: 'Evidence Graph', requireAnalyst: true },
-  { to: '/analyst/queue', icon: <Shield size={18} />, label: 'Verify Queue', requireAnalyst: true },
-  // Admin+
-  { to: '/admin', icon: <Settings size={18} />, label: 'Admin', requireAdmin: true },
-  { to: '/admin/health', icon: <Activity size={18} />, label: 'System Health', requireAdmin: true },
-  { to: '/admin/connectors', icon: <Database size={18} />, label: 'Connectors', requireAdmin: true },
-  { to: '/admin/users', icon: <Users size={18} />, label: 'Users', requireAdmin: true },
-  { to: '/admin/audit', icon: <ClipboardList size={18} />, label: 'Audit Log', requireAdmin: true },
-  { to: '/admin/flagged-reports', icon: <Settings size={18} />, label: 'Flagged Reports', requireAdmin: true },
+interface NavSection {
+  id: string;
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    id: 'core',
+    label: 'Command',
+    items: [
+      { to: '/',          icon: <LayoutDashboard size={15} />, label: 'Dashboard' },
+      { to: '/map',       icon: <Map size={15} />,             label: 'Live Map' },
+      { to: '/events',    icon: <Zap size={15} />,             label: 'Events' },
+      { to: '/alerts',    icon: <Bell size={15} />,            label: 'Alerts' },
+    ],
+  },
+  {
+    id: 'intelligence',
+    label: 'Intelligence',
+    items: [
+      { to: '/analytics',    icon: <BarChart2 size={15} />,  label: 'Analytics' },
+      { to: '/sources',      icon: <Database size={15} />,   label: 'Sources' },
+      { to: '/reports',      icon: <FileText size={15} />,   label: 'Reports' },
+      { to: '/submit',       icon: <Layers size={15} />,     label: 'Submit Report' },
+      {
+        to: '/dweg',
+        icon: <GitBranch size={15} />,
+        label: 'Evidence Graph',
+        requireAnalyst: true,
+      },
+      {
+        to: '/analyst/queue',
+        icon: <Shield size={15} />,
+        label: 'Verify Queue',
+        requireAnalyst: true,
+      },
+    ],
+  },
+  {
+    id: 'admin',
+    label: 'Admin',
+    items: [
+      { to: '/admin/health',          icon: <Activity size={15} />,      label: 'System Health',   requireAdmin: true },
+      { to: '/admin/connectors',      icon: <Radio size={15} />,         label: 'Connectors',      requireAdmin: true },
+      { to: '/admin/users',           icon: <Users size={15} />,         label: 'Users',           requireAdmin: true },
+      { to: '/admin/audit',           icon: <ClipboardList size={15} />, label: 'Audit Log',       requireAdmin: true },
+      { to: '/admin/flagged-reports', icon: <Settings size={15} />,      label: 'Flagged Reports', requireAdmin: true },
+    ],
+  },
 ];
 
 export function Sidebar() {
   const { user } = useAuthStore();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
-
+  const [collapsed, setCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
   const role = user?.role;
-  const visibleItems = NAV_ITEMS.filter((item) => {
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setCollapsed(true);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isVisible = (item: NavItem) => {
     if (item.requireAdmin && !canAdmin(role)) return false;
     if (item.requireAnalyst && !canAnalyst(role)) return false;
     return true;
-  });
+  };
+
+  const isActive = (to: string) =>
+    to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
 
   return (
     <nav
       id="sidebar"
       aria-label="Primary navigation"
       style={{
-        position: 'fixed',
-        top: 'var(--topbar-height)',
-        left: 0,
-        bottom: 0,
-        width: collapsed ? 52 : 'var(--sidebar-width)',
+        position: 'relative',
+        width: collapsed ? 'var(--sidebar-collapsed)' : 'var(--sidebar-width)',
         backgroundColor: 'var(--bg-surface)',
-        borderRight: '1px solid var(--bg-border)',
+        borderRight: '1px solid var(--border-hairline)',
         display: 'flex',
         flexDirection: 'column',
-        transition: 'width var(--transition-normal)',
+        transition: 'width 0.2s var(--ease-out-expo)',
         overflow: 'hidden',
         zIndex: 90,
+        flexShrink: 0,
+        height: '100%',
       }}
     >
-      {/* Nav items */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0', paddingTop: '0.75rem' }}>
-        {visibleItems.map((item) => {
-          const isActive =
-            item.to === '/'
-              ? location.pathname === '/'
-              : location.pathname.startsWith(item.to);
+      {/* Nav sections */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 0' }} className="scroll-area">
+        {NAV_SECTIONS.map((section) => {
+          const visibleItems = section.items.filter(isVisible);
+          if (visibleItems.length === 0) return null;
 
           return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              title={collapsed ? item.label : undefined}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: collapsed ? '0.625rem 0' : '0.625rem 1rem',
-                justifyContent: collapsed ? 'center' : 'flex-start',
-                marginBottom: 2,
-                fontSize: 'var(--text-sm)',
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? 'var(--brand-blue)' : 'var(--text-secondary)',
-                backgroundColor: isActive ? 'var(--brand-blue-dim)' : 'transparent',
-                borderLeft: isActive ? '2px solid var(--brand-blue)' : '2px solid transparent',
-                borderRadius: collapsed ? 0 : '0 var(--radius-sm) var(--radius-sm) 0',
-                textDecoration: 'none',
-                transition: 'all var(--transition-fast)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-              }}
-              aria-current={isActive ? 'page' : undefined}
-            >
-              <span style={{ flexShrink: 0 }}>{item.icon}</span>
-              {!collapsed && <span>{item.label}</span>}
-            </NavLink>
+            <div key={section.id} style={{ marginBottom: '0.125rem' }}>
+              {/* Section label */}
+              {!collapsed && (
+                <div style={{
+                  padding: '0.75rem 1rem 0.3rem',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 'var(--text-2xs)',
+                  fontWeight: 500,
+                  color: 'var(--text-ghost)',
+                  letterSpacing: '0.14em',
+                  textTransform: 'uppercase',
+                }}>
+                  {section.label}
+                </div>
+              )}
+
+              {/* Nav items */}
+              {visibleItems.map((item) => {
+                const active = isActive(item.to);
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    title={collapsed ? item.label : undefined}
+                    aria-current={active ? 'page' : undefined}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.55rem',
+                      padding: collapsed ? '0.6rem 0' : '0.45rem 1rem',
+                      justifyContent: collapsed ? 'center' : 'flex-start',
+                      marginBottom: 1,
+                      fontFamily: 'var(--font-sans)',
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: active ? 600 : 400,
+                      color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      backgroundColor: active ? 'rgba(0,229,195,0.06)' : 'transparent',
+                      borderLeft: active ? '2px solid var(--teal)' : '2px solid transparent',
+                      textDecoration: 'none',
+                      transition: 'all var(--t-fast)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      position: 'relative',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!active) {
+                        (e.currentTarget as HTMLAnchorElement).style.backgroundColor = 'var(--bg-hover)';
+                        (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-body)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!active) {
+                        (e.currentTarget as HTMLAnchorElement).style.backgroundColor = 'transparent';
+                        (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-secondary)';
+                      }
+                    }}
+                  >
+                    <span style={{
+                      flexShrink: 0,
+                      display: 'flex',
+                      color: active ? 'var(--teal)' : 'inherit',
+                    }}>
+                      {item.icon}
+                    </span>
+                    {!collapsed && (
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>
+                        {item.label}
+                      </span>
+                    )}
+                    {!collapsed && item.badge != null && item.badge > 0 && (
+                      <span style={{
+                        marginLeft: 'auto',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 'var(--text-2xs)',
+                        fontWeight: 700,
+                        padding: '0.1rem 0.35rem',
+                        borderRadius: 'var(--r-full)',
+                        background: 'var(--sev-4-dim)',
+                        color: 'var(--sev-4)',
+                      }}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </NavLink>
+                );
+              })}
+
+              {/* Section separator — thin hairline */}
+              {!collapsed && section.id !== 'admin' && (
+                <div style={{ height: 1, background: 'var(--border-hairline)', margin: '0.5rem 1rem' }} />
+              )}
+            </div>
           );
         })}
       </div>
@@ -130,19 +232,28 @@ export function Sidebar() {
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          padding: '0.75rem',
-          borderTop: '1px solid var(--bg-border)',
-          color: 'var(--text-muted)',
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          gap: '0.5rem',
+          padding: collapsed ? '0.75rem 0' : '0.65rem 1rem',
+          color: 'var(--text-ghost)',
           cursor: 'pointer',
-          fontSize: 'var(--text-xs)',
-          gap: '0.4rem',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 'var(--text-2xs)',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          transition: 'all var(--t-fast)',
+          flexShrink: 0,
+          background: 'none',
+          border: 'none',
+          borderTop: '1px solid var(--border-hairline)',
         }}
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-ghost)'; }}
+        aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
       >
-        {collapsed ? <ChevronRight size={16} /> : (
+        {collapsed ? <ChevronRight size={13} /> : (
           <>
-            <ChevronLeft size={16} />
+            <ChevronLeft size={13} />
             <span>Collapse</span>
           </>
         )}

@@ -53,19 +53,19 @@ describe('KPIBar Component', () => {
     render(<KPIBar events={mockEvents} totalReportsCount={1240} />);
 
     // Active Events: 3
-    expect(screen.getByText('ACTIVE EVENTS')).toBeInTheDocument();
+    expect(screen.getByText('ACTIVE WEATHER EVENTS')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
 
     // Severe Alerts (Sev 3 and 4): 2 (ev-1 is 3, ev-2 is 4)
-    expect(screen.getByText('SEVERE ALERTS')).toBeInTheDocument();
+    expect(screen.getByText('SEVERE CIVIL WARNINGS')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
 
     // Verification Rate: 2 out of 3 = 67%
-    expect(screen.getByText('VERIFICATION RATE')).toBeInTheDocument();
+    expect(screen.getByText('GROUND TRUTH RATE')).toBeInTheDocument();
     expect(screen.getByText('67%')).toBeInTheDocument();
 
     // Ingested Reports: 1,240
-    expect(screen.getByText('INGESTED REPORTS')).toBeInTheDocument();
+    expect(screen.getByText('INGESTED OBSERVATIONS')).toBeInTheDocument();
     expect(screen.getByText('1,240')).toBeInTheDocument();
   });
 

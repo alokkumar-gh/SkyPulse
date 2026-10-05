@@ -735,7 +735,7 @@ class SocialAPIAdapter(SocialWebProvider):
                             url=m_url,
                             thumbnail_url=m.get("preview_url") or m.get("thumbnail_url"),
                             mime_type=m.get("mime_type") or m.get("content_type"),
-                            file_size_bytes=m.get("file_size") or m.get("size") or (m.get("meta", {}).get("original", {}).get("size") if isinstance(m.get("meta"), dict) else None),
+                            file_size_bytes=int(m.get("file_size")) if str(m.get("file_size", "")).isdigit() else (int(m.get("size")) if str(m.get("size", "")).isdigit() else None),
                         )
                     )
 

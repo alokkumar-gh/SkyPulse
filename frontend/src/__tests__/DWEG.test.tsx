@@ -40,6 +40,10 @@ vi.mock('@vis.gl/react-google-maps', () => {
 
 // Mock api client
 vi.mock('../utils/api', () => ({
+  generateEventNarrative: vi.fn((ev: any) => `${ev?.category || 'Weather'} reported in ${ev?.state || 'India'}.`),
+  STATE_CENTROIDS: {
+    'Kerala': [10.8505, 76.2711],
+  },
   eventsAPI: {
     list: vi.fn().mockResolvedValue({
       results: [

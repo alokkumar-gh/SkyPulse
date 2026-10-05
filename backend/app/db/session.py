@@ -6,6 +6,12 @@ from pgvector.sqlalchemy import Vector
 from geoalchemy2 import Geometry
 from geoalchemy2.admin.dialects import sqlite as geo_sqlite
 
+import sqlite3
+import uuid
+
+# Guarantee SQLite persists UUID as strings (preventing int coercion)
+sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
+
 # SQLite type compilation shims for PostgreSQL-specific types
 geo_sqlite.after_create = lambda *a, **kw: None
 geo_sqlite.before_create = lambda *a, **kw: None
@@ -59,6 +65,12 @@ if settings.DATABASE_URL.startswith("sqlite"):
 
     @event.listens_for(engine.sync_engine, "connect")
     def on_connect(dbapi_conn, record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
+
         def _as_ewkb(val):
             if not val:
                 return None

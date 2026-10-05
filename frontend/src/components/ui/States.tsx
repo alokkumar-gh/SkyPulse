@@ -25,12 +25,12 @@ export function ErrorState({ title = 'Something went wrong', message, onRetry }:
       }}
       role="alert"
     >
-      <AlertCircle size={32} color="var(--severity-4)" />
+      <AlertCircle size={28} color="var(--sev-4)" strokeWidth={1.5} />
       <div>
-        <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+        <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.25rem', fontFamily: 'var(--font-sans)', letterSpacing: '-0.01em' }}>
           {title}
         </div>
-        <div style={{ fontSize: 'var(--text-sm)' }}>{message}</div>
+        <div style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{message}</div>
       </div>
       {onRetry && (
         <button
@@ -40,15 +40,17 @@ export function ErrorState({ title = 'Something went wrong', message, onRetry }:
             alignItems: 'center',
             gap: '0.4rem',
             padding: '0.4rem 1rem',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--bg-border)',
+            borderRadius: 'var(--r-2)',
+            border: '1px solid var(--border-subtle)',
             backgroundColor: 'var(--bg-elevated)',
-            color: 'var(--brand-blue)',
+            color: 'var(--teal)',
             fontSize: 'var(--text-sm)',
             cursor: 'pointer',
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.04em',
           }}
         >
-          <RefreshCw size={14} />
+          <RefreshCw size={13} />
           Retry
         </button>
       )}
@@ -74,8 +76,8 @@ export function LoadingState({ message = 'Loading...' }: LoadingStateProps) {
         textAlign: 'center',
       }}
     >
-      <RefreshCw size={28} style={{ animation: 'spin 1s linear infinite', color: 'var(--brand-blue)' }} />
-      <div style={{ fontSize: 'var(--text-sm)' }}>{message}</div>
+      <span className="pulse-live" style={{ width: 8, height: 8 }} />
+      <div style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{message}</div>
     </div>
   );
 }
@@ -124,16 +126,19 @@ export function OfflineBanner() {
         alignItems: 'center',
         justifyContent: 'center',
         gap: '0.5rem',
-        padding: '0.5rem',
-        backgroundColor: 'var(--severity-4)',
-        color: '#fff',
-        fontSize: 'var(--text-sm)',
-        fontWeight: 600,
+        padding: '0.4rem 1rem',
+        backgroundColor: 'var(--sev-4)',
+        color: 'var(--white)',
+        fontSize: 'var(--text-xs)',
+        fontWeight: 700,
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
       }}
       role="status"
       aria-live="polite"
     >
-      <WifiOff size={16} />
+      <WifiOff size={13} />
       LIVE CONNECTION LOST — Reconnecting…
     </div>
   );

@@ -75,6 +75,7 @@ class SourceSummary(BaseModel):
 
 class ReportSummary(BaseModel):
     id: str
+    normalized_text: Optional[str] = None
     primary_category: Optional[str] = None
     sub_category: Optional[str] = None
     severity: Optional[int] = None

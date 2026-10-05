@@ -81,6 +81,29 @@ class SubscriptionFilter:
 
     def matches(self, event: Dict[str, Any], role: str) -> bool:
         """Return True if the event passes all filters for this subscription."""
+        event_type = event.get("type", "")
+
+        # Always permit lifecycle and observation events to reach frontend map/dashboard
+        if event_type in (
+            "WEATHER_OBSERVATION_UPDATED",
+            "weather_observation.updated",
+            "EVENT_EXPIRED",
+            "EVENT_DEACTIVATED",
+            "ping",
+            "pong",
+            "connection.established",
+        ):
+            return True
+
+        # RBAC: non-public sensitive fields stripped (done at send side, not filter)
+        # Analyst-only event types
+        if event_type in ("weather_event.anomaly",) and role not in ANALYST_ROLES:
+            return False
+
+        # Admin-only system events
+        if event_type.startswith("system.") and role not in ADMIN_ROLES:
+            return False
+
         data = event.get("data", {})
         loc = data.get("location", {})
 
@@ -123,16 +146,6 @@ class SubscriptionFilter:
             vs = data.get("verification_status", "UNVERIFIED")
             if vs not in self.verification_statuses:
                 return False
-
-        # RBAC: non-public sensitive fields stripped (done at send side, not filter)
-        # Analyst-only event types
-        event_type = event.get("type", "")
-        if event_type in ("weather_event.anomaly",) and role not in ANALYST_ROLES:
-            return False
-
-        # Admin-only system events
-        if event_type.startswith("system.") and role not in ADMIN_ROLES:
-            return False
 
         # Bounding box filter
         if self.bbox:

@@ -195,14 +195,20 @@ async def system_health(
     ]
 
     from ml.model_registry import model_registry
+    from ai.opensearch_indexer import opensearch_indexer
+    from app.db.neo4j_session import check_neo4j_connection
+
+    opensearch_stat = "HEALTHY" if opensearch_indexer.is_live else "FALLBACK"
+    neo4j_live = await check_neo4j_connection()
+    neo4j_stat = "HEALTHY" if neo4j_live else "FALLBACK"
 
     return SystemHealthResponse(
         api_status="HEALTHY",
         database_status=db_status,
         kafka_status="HEALTHY",
         redis_status="HEALTHY",
-        opensearch_status="HEALTHY",
-        neo4j_status="HEALTHY",
+        opensearch_status=opensearch_stat,
+        neo4j_status=neo4j_stat,
         ai_worker_status="HEALTHY",
         ingestion_rate_per_minute=24,
         processing_queue_depth=0,

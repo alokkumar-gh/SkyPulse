@@ -2,28 +2,43 @@
 SkyPulse IndianAPI Third-Party Weather Ingestion Connector
 ==========================================================
 Integrates with IndianAPI (https://weather.indianapi.in) REST endpoints for Indian cities.
-Collects third-party current weather observations and forecasts.
+Collects third-party current weather observations with strict diagnostic classification.
 
-Source Attribution:
+Diagnostic Error Classification:
+  - 200 -> LIVE / HEALTHY
+  - 401 / 403 -> AUTH_ERROR
+  - 404 -> INVALID_ENDPOINT_OR_LOCATION
+  - 429 -> RATE_LIMITED
+  - 5xx -> UPSTREAM_ERROR
+  - timeout -> TIMEOUT
+  - connection error -> NETWORK_ERROR
+  - invalid JSON -> INVALID_RESPONSE
+
+Source Attribution & Trust Policy:
   - source_type: WEATHER_API
-  - provider: IndianAPI
+  - source_name: INDIANAPI
+  - provider_name: IndianAPI
   - is_official_government: False (Third-Party Meteorological Aggregator)
-  - license: Commercial / Free-Tier Developer API
+  - official_organization: False
+  - imd_official: False
+  - NOT represented as an official IMD direct source.
 """
 
+import asyncio
+import hashlib
+import json
+import logging
+import random
 import re
 import time
-import json
-import hashlib
-import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Union
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
-from connectors.base import BaseConnector
-from connectors.schema import CanonicalRawEvent, ConnectorStatusEnum
 from app.core.config import settings
-from app.models.enums import WeatherCategory, SourceType
+from app.models.enums import SourceType, WeatherCategory
+from connectors.base import BaseConnector, sanitize_error_message
+from connectors.schema import CanonicalRawEvent, ConnectorStatusEnum
 
 logger = logging.getLogger("skypulse.connectors.indianapi")
 
@@ -66,7 +81,7 @@ def extract_numeric_value(val: Any) -> Optional[float]:
     return None
 
 
-def parse_indianapi_city_and_station(city_raw: str) -> tuple[str, Optional[str]]:
+def parse_indianapi_city_and_station(city_raw: str) -> Tuple[str, Optional[str]]:
     """Splits city strings like 'Chennai-meenambakkam' into ('Chennai', 'meenambakkam')."""
     if not city_raw:
         return ("Unknown", None)
@@ -82,7 +97,7 @@ def map_condition_to_sih_category(
     temp_c: Optional[float] = None,
     wind_kmph: Optional[float] = None,
 ) -> str:
-    """Maps weather observations and condition text to the 7 canonical SIH categories."""
+    """Maps weather observations and condition text to canonical SIH categories."""
     c = (condition_text or "").lower()
 
     # 1. Extreme and compound conditions first
@@ -140,6 +155,21 @@ def infer_indianapi_severity(
     return 2 if category != WeatherCategory.UNKNOWN.value else 1
 
 
+def classify_indianapi_exception(exc: Exception) -> Tuple[str, str]:
+    """Classifies client exception into standardized diagnostic category and message."""
+    msg = str(exc)
+    msg_lower = msg.lower()
+
+    if isinstance(exc, httpx.ConnectError) or "connection refused" in msg_lower:
+        return "NETWORK_ERROR", f"TCP connection error to IndianAPI: {msg}"
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException)):
+        return "TIMEOUT", f"Timeout awaiting IndianAPI response: {msg}"
+    if isinstance(exc, json.JSONDecodeError):
+        return "INVALID_RESPONSE", f"Invalid JSON response from IndianAPI: {msg}"
+
+    return "UPSTREAM_ERROR", sanitize_error_message(msg)
+
+
 class IndianAPIWeatherConnector(BaseConnector):
     """
     Third-party weather data ingestion connector for IndianAPI (https://weather.indianapi.in).
@@ -150,7 +180,7 @@ class IndianAPIWeatherConnector(BaseConnector):
     def __init__(
         self,
         source_id: str = "00000000-0000-0000-0000-000000000007",
-        name: str = "IndianAPI Weather Connector",
+        name: str = "IndianAPI Third-Party Weather Provider",
         source_type: str = SourceType.WEATHER_API.value,
         config: Optional[Dict[str, Any]] = None,
         is_demo: bool = False,
@@ -170,6 +200,7 @@ class IndianAPIWeatherConnector(BaseConnector):
             api_base_url
             or self.config.get("api_base_url")
             or getattr(settings, "INDIANAPI_BASE_URL", "https://weather.indianapi.in")
+            or "https://weather.indianapi.in"
         ).rstrip("/")
         self.api_key = (
             api_key
@@ -181,6 +212,17 @@ class IndianAPIWeatherConnector(BaseConnector):
             poll_interval_seconds
             or self.config.get("poll_interval_seconds")
             or getattr(settings, "INDIANAPI_POLL_INTERVAL_SECONDS", 600)
+            or 600
+        )
+        self.timeout_seconds = float(
+            self.config.get("timeout_seconds")
+            or getattr(settings, "INDIANAPI_TIMEOUT_SECONDS", 10.0)
+            or 10.0
+        )
+        self.max_retries = int(
+            self.config.get("max_retries")
+            or getattr(settings, "INDIANAPI_MAX_RETRIES", 2)
+            or 2
         )
         self.target_cities = (
             target_cities
@@ -188,14 +230,13 @@ class IndianAPIWeatherConnector(BaseConnector):
             or self._parse_configured_cities()
             or DEFAULT_INDIANAPI_CITIES
         )
-        self.consecutive_failures = 0
         self._client: Optional[httpx.AsyncClient] = None
 
         # Assess initial configuration status
         if not self.api_key or not self.api_key.strip():
             self.status = ConnectorStatusEnum.NOT_CONFIGURED
         else:
-            self.status = ConnectorStatusEnum.HEALTHY
+            self.status = ConnectorStatusEnum.DEGRADED  # Marked LIVE only on real success
 
     def _parse_configured_cities(self) -> List[str]:
         raw = getattr(settings, "INDIANAPI_CITIES", "")
@@ -208,9 +249,9 @@ class IndianAPIWeatherConnector(BaseConnector):
     async def start(self) -> None:
         """Initializes HTTP client and sets operational status."""
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(15.0, connect=8.0),
+            timeout=httpx.Timeout(self.timeout_seconds, connect=5.0),
             headers={
-                "User-Agent": "SkyPulse-NationalWeatherBigDataAnalytics/1.0 (ThirdPartyIngestion)",
+                "User-Agent": "SkyPulse-NationalWeatherAnalytics/1.0 (ThirdPartyIngestion)",
                 "Accept": "application/json",
             },
             follow_redirects=True,
@@ -221,7 +262,6 @@ class IndianAPIWeatherConnector(BaseConnector):
             self.status = ConnectorStatusEnum.NOT_CONFIGURED
             logger.info("IndianAPIWeatherConnector started in NOT_CONFIGURED state (missing INDIANAPI_API_KEY).")
         else:
-            self.status = ConnectorStatusEnum.HEALTHY
             logger.info("IndianAPIWeatherConnector started with %d target cities.", len(self.target_cities))
 
     async def stop(self) -> None:
@@ -233,7 +273,7 @@ class IndianAPIWeatherConnector(BaseConnector):
         logger.info("IndianAPIWeatherConnector stopped.")
 
     async def health_check(self) -> ConnectorStatusEnum:
-        """Evaluates health of the IndianAPI integration."""
+        """Evaluates health of the IndianAPI integration with live diagnostic classification."""
         if not self.api_key or not self.api_key.strip():
             self.status = ConnectorStatusEnum.NOT_CONFIGURED
             return ConnectorStatusEnum.NOT_CONFIGURED
@@ -241,90 +281,129 @@ class IndianAPIWeatherConnector(BaseConnector):
         if not self.is_running:
             return ConnectorStatusEnum.DISABLED
 
-        if self.consecutive_failures >= 3:
-            self.status = ConnectorStatusEnum.ERROR
-            return ConnectorStatusEnum.ERROR
-        elif self.consecutive_failures > 0:
-            self.status = ConnectorStatusEnum.DEGRADED
-            return ConnectorStatusEnum.DEGRADED
+        self.last_attempt_at = datetime.now(timezone.utc)
+        client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_seconds, connect=5.0))
+        close_after = self._client is None
 
         try:
-            client = self._client or httpx.AsyncClient(timeout=8.0)
-            close_after = self._client is None
-            try:
-                # Test with first configured city
-                test_city = self.target_cities[0] if self.target_cities else "New Delhi"
-                url = f"{self.api_base_url}/india/weather"
-                headers = {"x-api-key": self.api_key}
-                params = {"city": test_city}
-                resp = await client.get(url, headers=headers, params=params)
+            test_city = self.target_cities[0] if self.target_cities else "New Delhi"
+            url = f"{self.api_base_url}/india/weather"
+            headers = {"x-api-key": self.api_key}
+            params = {"city": test_city}
 
-                if resp.status_code == 200:
-                    self.status = ConnectorStatusEnum.HEALTHY
-                    return ConnectorStatusEnum.HEALTHY
-                elif resp.status_code in (401, 403):
-                    self.status = ConnectorStatusEnum.ERROR
-                    return ConnectorStatusEnum.ERROR
-                elif resp.status_code == 429:
-                    self.status = ConnectorStatusEnum.DEGRADED
-                    return ConnectorStatusEnum.DEGRADED
-                else:
-                    self.status = ConnectorStatusEnum.DEGRADED
-                    return ConnectorStatusEnum.DEGRADED
-            finally:
-                if close_after:
-                    await client.aclose()
-        except Exception as e:
-            logger.warning("IndianAPI health check failed: %s", e)
+            resp = await client.get(url, headers=headers, params=params)
+
+            if resp.status_code == 200:
+                self.status = ConnectorStatusEnum.LIVE
+                self.is_reachable = True
+                self.is_authenticated = True
+                self.consecutive_failures = 0
+                self.last_error_code = None
+                self.last_error_message = None
+                return ConnectorStatusEnum.LIVE
+            elif resp.status_code in (401, 403):
+                self.status = ConnectorStatusEnum.AUTH_ERROR
+                self.is_reachable = True
+                self.is_authenticated = False
+                self.record_error(f"IndianAPI authentication error (HTTP {resp.status_code})", "AUTH_ERROR")
+                return ConnectorStatusEnum.AUTH_ERROR
+            elif resp.status_code == 404:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.is_reachable = True
+                self.record_error(f"IndianAPI endpoint or test city '{test_city}' not found (HTTP 404)", "INVALID_ENDPOINT_OR_LOCATION")
+                return ConnectorStatusEnum.DEGRADED
+            elif resp.status_code == 429:
+                self.status = ConnectorStatusEnum.RATE_LIMITED
+                self.is_reachable = True
+                self.record_error("IndianAPI rate limited (HTTP 429)", "RATE_LIMITED")
+                return ConnectorStatusEnum.RATE_LIMITED
+            elif resp.status_code >= 500:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.is_reachable = True
+                # Upstream server error (e.g. 500 list index out of range)
+                self.record_error(f"IndianAPI upstream error (HTTP {resp.status_code}): {sanitize_error_message(resp.text)}", "UPSTREAM_ERROR")
+                return ConnectorStatusEnum.DEGRADED
+            else:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.record_error(f"IndianAPI unexpected status (HTTP {resp.status_code})", f"HTTP_{resp.status_code}")
+                return ConnectorStatusEnum.DEGRADED
+
+        except Exception as exc:
+            err_code, err_reason = classify_indianapi_exception(exc)
+            self.is_reachable = False
             self.status = ConnectorStatusEnum.DEGRADED
+            self.record_error(err_reason, err_code)
             return ConnectorStatusEnum.DEGRADED
+        finally:
+            if close_after:
+                await client.aclose()
 
     async def poll(self) -> List[CanonicalRawEvent]:
-        """Polls IndianAPI current weather observations across target cities."""
+        """Polls IndianAPI current weather observations across target cities with bounded retries."""
         if not self.is_running or not self.api_key or not self.api_key.strip():
             return []
 
         events: List[CanonicalRawEvent] = []
         t0 = time.time()
-        client = self._client or httpx.AsyncClient(timeout=15.0)
+        self.last_attempt_at = datetime.now(timezone.utc)
+        client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_seconds, connect=5.0))
 
         for city in self.target_cities:
-            try:
-                url = f"{self.api_base_url}/india/weather"
-                headers = {"x-api-key": self.api_key}
-                params = {"city": city}
+            url = f"{self.api_base_url}/india/weather"
+            headers = {"x-api-key": self.api_key}
+            params = {"city": city}
 
-                resp = await client.get(url, headers=headers, params=params)
+            resp = None
+            last_exc = None
 
-                if resp.status_code == 200:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    resp = await client.get(url, headers=headers, params=params)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < self.max_retries:
+                        jitter = random.uniform(0.1, 0.4)
+                        backoff = (0.4 * (2 ** attempt)) + jitter
+                        await asyncio.sleep(backoff)
+
+            if resp is None:
+                err_code, err_reason = classify_indianapi_exception(last_exc)
+                self.record_error(f"Failed querying city '{city}': {err_reason}", err_code)
+                continue
+
+            if resp.status_code == 200:
+                try:
                     data = resp.json()
                     event = self.parse(data, requested_city=city)
                     if event:
                         events.append(event)
-                    self.consecutive_failures = 0
+                    self.status = ConnectorStatusEnum.LIVE
+                    self.is_reachable = True
+                    self.is_authenticated = True
+                except Exception as json_err:
+                    self.record_error(f"Invalid JSON from IndianAPI for '{city}': {json_err}", "INVALID_RESPONSE")
 
-                elif resp.status_code == 429:
-                    self.consecutive_failures += 1
-                    self.record_error("IndianAPI rate limit exceeded (HTTP 429)")
-                    self.status = ConnectorStatusEnum.DEGRADED
-                    break  # Politeness: stop current cycle on rate limit
+            elif resp.status_code == 429:
+                self.status = ConnectorStatusEnum.RATE_LIMITED
+                self.record_error("IndianAPI rate limit exceeded (HTTP 429)", "RATE_LIMITED")
+                break  # Politeness: halt current cycle
 
-                elif resp.status_code in (401, 403):
-                    self.consecutive_failures += 1
-                    self.status = ConnectorStatusEnum.ERROR
-                    self.record_error(f"IndianAPI authentication failure (HTTP {resp.status_code})")
-                    break
+            elif resp.status_code in (401, 403):
+                self.status = ConnectorStatusEnum.AUTH_ERROR
+                self.is_authenticated = False
+                self.record_error(f"IndianAPI authentication failure (HTTP {resp.status_code})", "AUTH_ERROR")
+                break
 
-                elif resp.status_code == 404:
-                    logger.debug("City '%s' not found in IndianAPI index (HTTP 404)", city)
+            elif resp.status_code == 404:
+                logger.debug("City '%s' not found in IndianAPI index (HTTP 404)", city)
 
-                else:
-                    self.consecutive_failures += 1
-                    self.record_error(f"IndianAPI returned HTTP {resp.status_code} for city '{city}'")
+            elif resp.status_code >= 500:
+                self.status = ConnectorStatusEnum.DEGRADED
+                self.record_error(f"IndianAPI upstream error (HTTP {resp.status_code}) for city '{city}'", "UPSTREAM_ERROR")
 
-            except Exception as e:
-                self.consecutive_failures += 1
-                self.record_error(f"Error polling IndianAPI for city '{city}': {e}")
+            else:
+                self.record_error(f"IndianAPI returned HTTP {resp.status_code} for city '{city}'", f"HTTP_{resp.status_code}")
 
         latency_ms = (time.time() - t0) * 1000
         if events:
@@ -333,7 +412,10 @@ class IndianAPIWeatherConnector(BaseConnector):
         return events
 
     def parse(self, raw_data: Any, requested_city: Optional[str] = None) -> CanonicalRawEvent:
-        """Parses IndianAPI JSON payload into a typed CanonicalRawEvent."""
+        """
+        Parses IndianAPI JSON payload into a typed CanonicalRawEvent.
+        Preserves strict third-party source trust rules.
+        """
         if not isinstance(raw_data, dict):
             raw_data = {"raw": str(raw_data)}
 
@@ -351,6 +433,7 @@ class IndianAPIWeatherConnector(BaseConnector):
         humidity_val = extract_numeric_value(current_obj.get("humidity") or raw_data.get("humidity") or raw_data.get("humidity_pct"))
         rainfall_val = extract_numeric_value(current_obj.get("rainfall") or raw_data.get("rainfall") or raw_data.get("precip_mm"))
         wind_val = extract_numeric_value(current_obj.get("wind_speed") or current_obj.get("wind") or raw_data.get("wind_speed") or raw_data.get("wind_kph"))
+        wind_dir = current_obj.get("wind_direction") or raw_data.get("wind_direction") or raw_data.get("wind_dir")
 
         condition_desc = (
             current_obj.get("description")
@@ -379,8 +462,8 @@ class IndianAPIWeatherConnector(BaseConnector):
         time_bucket = now_utc.strftime("%Y%m%d%H")
         city_slug = re.sub(r"[^a-zA-Z0-9]+", "_", city_name.lower()).strip("_")
 
-        # 5. Descriptive Text
-        text_parts = [f"Third-Party Weather Observation (IndianAPI) for {city_name}"]
+        # 5. Descriptive Text (Strictly third-party provenance statement)
+        text_parts = [f"IndianAPI weather data for {city_name}"]
         if station_name:
             text_parts.append(f"[{station_name} station]")
         text_parts.append(f": {condition_desc or 'Current observations'}.")
@@ -392,10 +475,12 @@ class IndianAPIWeatherConnector(BaseConnector):
             text_parts.append(f"Rainfall: {rainfall_val} mm.")
         if wind_val is not None:
             text_parts.append(f"Wind Speed: {wind_val} km/h.")
+        if wind_dir:
+            text_parts.append(f"Wind Direction: {wind_dir}.")
 
         descriptive_text = " ".join(text_parts)
 
-        # 6. Idempotency Key (Prevents duplicate events on same hour for same city)
+        # 6. Idempotency Key
         hash_input = f"indianapi:{city_slug}:{time_bucket}:{category}:{temp_val}:{rainfall_val}"
         idempotency_key = f"indianapi:{city_slug}:{hashlib.sha256(hash_input.encode('utf-8')).hexdigest()[:16]}"
         external_id = f"indianapi_{city_slug}_{time_bucket}"
@@ -403,8 +488,12 @@ class IndianAPIWeatherConnector(BaseConnector):
         # 7. Complete Provenance Metadata Payload
         raw_payload = {
             "provider": "IndianAPI",
+            "provider_name": "IndianAPI",
             "source_type": SourceType.WEATHER_API.value,
+            "source_name": "INDIANAPI",
             "is_official_government": False,
+            "official_organization": False,
+            "imd_official": False,
             "license": "Third-Party Developer API (https://indianapi.in/weather-api)",
             "endpoint": "/india/weather",
             "city": city_name,
@@ -416,6 +505,7 @@ class IndianAPIWeatherConnector(BaseConnector):
                 "humidity_pct": humidity_val,
                 "rainfall_mm": rainfall_val,
                 "wind_speed_kmph": wind_val,
+                "wind_direction": wind_dir,
                 "condition": condition_desc,
             },
         }
@@ -427,8 +517,8 @@ class IndianAPIWeatherConnector(BaseConnector):
             text=descriptive_text,
             suggested_category=category,
             severity=severity,
-            latitude=None,  # No fabricated GPS coordinates
-            longitude=None,  # No fabricated GPS coordinates
+            latitude=None,  # Zero fake GPS
+            longitude=None,  # Zero fake GPS
             city=city_name,
             district=city_name,
             state=state,

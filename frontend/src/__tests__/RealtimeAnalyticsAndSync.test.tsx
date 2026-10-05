@@ -22,6 +22,11 @@ import { skyPulseWSClient, type WSEventEnvelope } from '../utils/wsClient';
 import type { NationalAnalytics, TimeseriesSeries, WeatherEvent } from '../types';
 
 vi.mock('../utils/api', () => ({
+  generateEventNarrative: vi.fn((ev: any) => `${ev?.category || 'Weather'} reported in ${ev?.state || 'India'}.`),
+  STATE_CENTROIDS: {
+    'Bihar': [25.0961, 85.3131],
+    'Maharashtra': [19.0760, 72.8777],
+  },
   analyticsAPI: {
     national: vi.fn(),
     state: vi.fn(),
@@ -30,6 +35,7 @@ vi.mock('../utils/api', () => ({
   eventsAPI: {
     list: vi.fn(),
     get: vi.fn(),
+    map: vi.fn().mockResolvedValue({ type: 'FeatureCollection', features: [] }),
     timeline: vi.fn(),
     nearby: vi.fn(),
     verifyEvent: vi.fn(),

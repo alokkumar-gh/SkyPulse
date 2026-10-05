@@ -26,13 +26,13 @@ describe('Workflows Component Suite', () => {
     it('renders form inputs and handles missing description validation', async () => {
       render(<SubmitReport />);
 
-      expect(screen.getByText('Submit Citizen Weather Report')).toBeInTheDocument();
+      expect(screen.getByText('Submit Ground Observation')).toBeInTheDocument();
 
-      const submitButton = screen.getByRole('button', { name: /submit ground report/i });
+      const submitButton = screen.getByRole('button', { name: /transmit observation/i });
       fireEvent.click(submitButton);
 
       expect(
-        screen.getByText(/please provide a brief description of the observed weather/i)
+        screen.getByText(/please provide a brief description/i)
       ).toBeInTheDocument();
       expect(reportsAPI.createReport).not.toHaveBeenCalled();
     });
@@ -47,12 +47,12 @@ describe('Workflows Component Suite', () => {
 
       render(<SubmitReport />);
 
-      const descTextarea = screen.getByPlaceholderText(/describe weather conditions/i);
+      const descTextarea = screen.getByLabelText(/observation narrative/i);
       fireEvent.change(descTextarea, {
         target: { value: 'Waterlogging over 2 feet near local market, traffic halted.' },
       });
 
-      const submitButton = screen.getByRole('button', { name: /submit ground report/i });
+      const submitButton = screen.getByRole('button', { name: /transmit observation/i });
       fireEvent.click(submitButton);
 
       await waitFor(() => {
@@ -63,7 +63,7 @@ describe('Workflows Component Suite', () => {
           })
         );
         expect(
-          screen.getByText(/report submitted successfully/i)
+          screen.getByText(/observation ingested successfully/i)
         ).toBeInTheDocument();
       });
     });
@@ -98,13 +98,13 @@ describe('Workflows Component Suite', () => {
 
       render(<VerificationQueue />);
 
-      expect(screen.getByText('Analyst Verification Queue')).toBeInTheDocument();
+      expect(screen.getByText('Ground Truth Verification Queue')).toBeInTheDocument();
       expect(
-        screen.getByText(/1 Events Awaiting Verification/i)
+        screen.getByText(/PENDING VALIDATION ITEMS \(1\)/i)
       ).toBeInTheDocument();
       expect(
-        screen.getByText('Flash Flood Reported in Cuttack')
-      ).toBeInTheDocument();
+        screen.getAllByText('Flash Flood Reported in Cuttack').length
+      ).toBeGreaterThanOrEqual(1);
     });
 
     it('allows analyst to inspect an event and perform verification action', async () => {
@@ -121,12 +121,12 @@ describe('Workflows Component Suite', () => {
 
       render(<VerificationQueue />);
 
-      const eventItem = screen.getByText('Flash Flood Reported in Cuttack');
+      const eventItem = screen.getAllByText('Flash Flood Reported in Cuttack')[0];
       fireEvent.click(eventItem);
 
-      expect(screen.getByText(/Analyst Review Note/i)).toBeInTheDocument();
+      expect(screen.getByText(/Operator Audit Justification/i)).toBeInTheDocument();
 
-      const verifyBtn = screen.getByRole('button', { name: /confirm verified/i });
+      const verifyBtn = screen.getByRole('button', { name: /confirm ground truth/i });
       fireEvent.click(verifyBtn);
 
       await waitFor(() => {

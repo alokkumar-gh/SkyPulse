@@ -2,10 +2,27 @@
 SkyPulse Transparent Confidence Engine
 Calculates normalized multi-factor confidence scores for weather reports and canonical events.
 Maintains granular component scores for full analyst auditability and explainability.
+Standardizes confidence semantics:
+  0–39%:   LOW
+  40–69%:  MODERATE
+  70–84%:  HIGH
+  85–100%: VERY HIGH
 """
 
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
+
+
+def get_confidence_tier_label(confidence: float) -> str:
+    """Returns standardized confidence category label."""
+    if confidence < 0.40:
+        return "LOW"
+    elif confidence < 0.70:
+        return "MODERATE"
+    elif confidence < 0.85:
+        return "HIGH"
+    else:
+        return "VERY HIGH"
 
 
 class ConfidenceComponents(BaseModel):
@@ -21,6 +38,7 @@ class ConfidenceComponents(BaseModel):
 
 class ConfidenceEvaluation(BaseModel):
     final_confidence: float = Field(ge=0.0, le=1.0)
+    confidence_tier: str = "MODERATE"
     components: ConfidenceComponents
     explanation: str
 
@@ -49,11 +67,12 @@ class ConfidenceEngine:
         temporal_consistency: float = 0.85,
         media_conf: Optional[float] = None,
         has_contradictions: bool = False,
+        contradiction_severity: float = 0.35,
     ) -> ConfidenceEvaluation:
         # Default media to neutral if no media attached
         media_val = 0.5 if media_conf is None else media_conf
 
-        penalty = 0.35 if has_contradictions else 0.0
+        penalty = contradiction_severity if has_contradictions else 0.0
 
         raw_score = (
             0.20 * classification_conf
@@ -67,6 +86,7 @@ class ConfidenceEngine:
         )
 
         final_conf = max(0.05, min(0.99, raw_score))
+        tier_label = get_confidence_tier_label(final_conf)
 
         components = ConfidenceComponents(
             classification=round(classification_conf, 2),
@@ -80,7 +100,7 @@ class ConfidenceEngine:
         )
 
         explanation = (
-            f"Confidence: {final_conf:.0%}. "
+            f"Confidence: {final_conf:.0%} ({tier_label}). "
             f"Classifier ({classification_conf:.0%}), Trust ({source_trust:.0%}), "
             f"Corroboration ({corroboration_score:.0%})"
             + (f", Contradiction Penalty applied (-{penalty:.0%})" if has_contradictions else "")
@@ -88,6 +108,7 @@ class ConfidenceEngine:
 
         return ConfidenceEvaluation(
             final_confidence=round(final_conf, 2),
+            confidence_tier=tier_label,
             components=components,
             explanation=explanation,
         )

@@ -61,7 +61,7 @@ class DeduplicationEngine:
     """
 
     DEDUP_TIME_WINDOW_HOURS = 6.0
-    DEDUP_SPATIAL_RADIUS_KM = 50.0
+    DEDUP_SPATIAL_RADIUS_KM = 25.0
 
     @classmethod
     def evaluate_candidate(
@@ -71,6 +71,10 @@ class DeduplicationEngine:
     ) -> DuplicateEvaluation:
         """
         Evaluate candidate match across all 4 duplicate levels.
+        Enforces strict meteorological distinction:
+        - Never merges different hazard categories (e.g. RAINFALL vs HEATWAVE vs DUST_STORM)
+        - Never merges distant locations (> 25 km or distinct cities/taluks)
+        - Never merges observations outside the 6-hour active weather window
         """
         # --- Level 1: Exact Idempotency Fingerprint ---
         new_hash = new_report.get("idempotency_key")
@@ -108,15 +112,87 @@ class DeduplicationEngine:
 
         time_delta_h = abs((t1 - t2).total_seconds()) / 3600.0
 
-        # Category match
-        cat1 = (new_report.get("primary_category") or "").upper()
+        # Administrative location matching
+        st1 = (new_report.get("state") or new_report.get("location_state") or "").lower().strip()
+        st2 = (candidate.get("state") or candidate.get("primary_state") or candidate.get("location_state") or "").lower().strip()
+        dist1 = (new_report.get("district") or new_report.get("location_district") or "").lower().strip()
+        dist2 = (candidate.get("district") or candidate.get("primary_district") or "").lower().strip()
+        city1 = (new_report.get("city") or new_report.get("location_city") or "").lower().strip()
+        city2 = (candidate.get("city") or candidate.get("primary_city") or "").lower().strip()
+
+        admin_match = 0.0
+        if st1 and st2 and (st1 == st2 or st1 in st2 or st2 in st1):
+            if city1 and city2:
+                c1_clean = city1.replace("bengaluru", "bangalore").replace("bhubaneswar", "bhubaneshwar")
+                c2_clean = city2.replace("bengaluru", "bangalore").replace("bhubaneswar", "bhubaneshwar")
+                if c1_clean == c2_clean or c1_clean in c2_clean or c2_clean in c1_clean:
+                    admin_match = 1.0
+                else:
+                    admin_match = 0.0  # Different distinct cities in same state CANNOT be merged (Section 15)
+            elif dist1 and dist2:
+                d1_clean = dist1.replace("khordha", "khurda").replace("bengaluru", "bangalore")
+                d2_clean = dist2.replace("khordha", "khurda").replace("bengaluru", "bangalore")
+                if d1_clean == d2_clean or d1_clean in d2_clean or d2_clean in d1_clean:
+                    admin_match = 1.0
+                else:
+                    admin_match = 0.0  # Different distinct districts in same state CANNOT be merged (Section 15)
+            elif (city1 or dist1) and (not city2 and not dist2):
+                # Specific district/city report should NOT collapse into general state-level candidate
+                admin_match = 0.15
+            elif (city2 or dist2) and (not city1 and not dist1):
+                # General state-level report should NOT collapse into specific district candidate
+                admin_match = 0.15
+            elif not dist1 and not dist2 and not city1 and not city2:
+                # Both are broad state-level regional reports in the same state
+                admin_match = 0.70
+            else:
+                admin_match = 0.0
+
+        # Category match - strict distinction
+        cat1 = (new_report.get("primary_category") or new_report.get("category") or "").upper()
         cat2 = (candidate.get("primary_category") or candidate.get("category") or "").upper()
         if cat1 and cat2 and cat1 == cat2:
             category_match = 1.0
-        elif (cat1, cat2) in [("FLOODING", "RAINFALL"), ("RAINFALL", "FLOODING"), ("THUNDERSTORM", "RAINFALL"), ("RAINFALL", "THUNDERSTORM")]:
-            category_match = 0.85
+        elif (cat1, cat2) in [
+            ("FLOODING", "RAINFALL"), ("RAINFALL", "FLOODING"),
+        ]:
+            # Direct causal compound relationship
+            category_match = 0.80
+        elif cat1 == "UNKNOWN" or cat2 == "UNKNOWN":
+            category_match = 0.50
         else:
             category_match = 0.0
+
+        # If categories are incompatible, they CANNOT be merged
+        if category_match < 0.50:
+            return DuplicateEvaluation(
+                verdict="UNIQUE",
+                is_duplicate=False,
+                similarity_score=0.0,
+                matched_report_id=None,
+                matched_event_id=None,
+                level_matched="NONE",
+                spatial_distance_km=round(distance_km, 2) if distance_km is not None else None,
+                time_delta_hours=round(time_delta_h, 2),
+                explanation=f"Distinct weather hazard phenomena ({cat1} vs {cat2})",
+            )
+
+        # Incompatible semantic subtypes (e.g. RAINFALL_DEFICIT vs active RAINFALL_OBSERVED/HEAVY_RAINFALL)
+        sub1 = (new_report.get("sub_category") or new_report.get("phenomenon") or "").upper()
+        sub2 = (candidate.get("sub_category") or candidate.get("phenomenon") or "").upper()
+        if (sub1 == "RAINFALL_DEFICIT" and sub2 in ("RAINFALL_OBSERVED", "HEAVY_RAINFALL", "EXTREME_RAINFALL", "CLOUDBURST")) or \
+           (sub2 == "RAINFALL_DEFICIT" and sub1 in ("RAINFALL_OBSERVED", "HEAVY_RAINFALL", "EXTREME_RAINFALL", "CLOUDBURST")):
+            return DuplicateEvaluation(
+                verdict="UNIQUE",
+                is_duplicate=False,
+                similarity_score=0.0,
+                matched_report_id=None,
+                matched_event_id=None,
+                level_matched="NONE",
+                spatial_distance_km=round(distance_km, 2) if distance_km is not None else None,
+                time_delta_hours=round(time_delta_h, 2),
+                explanation=f"Incompatible meteorological phenomena (Seasonal {sub1 or 'DEFICIT'} vs Observed {sub2 or 'RAINFALL'})",
+            )
 
         # --- Level 4: Media pHash match ---
         new_phash = new_report.get("phash")
@@ -143,21 +219,23 @@ class DeduplicationEngine:
                 semantic_sim = intersect / union if union > 0 else 0.0
 
         # --- Level 3: Spatiotemporal proximity gate ---
-        is_spatially_close = (distance_km is not None and distance_km <= cls.DEDUP_SPATIAL_RADIUS_KM)
-        is_temporally_close = (time_delta_h <= cls.DEDUP_TIME_WINDOW_HOURS)
-
-        # Spatial score: 1.0 at 0km, down to 0.0 at 50km
+        is_spatially_close = False
         spatial_score = 0.0
         if distance_km is not None:
+            is_spatially_close = (distance_km <= cls.DEDUP_SPATIAL_RADIUS_KM)
             spatial_score = max(0.0, 1.0 - (distance_km / cls.DEDUP_SPATIAL_RADIUS_KM))
+        elif admin_match >= 0.80:
+            is_spatially_close = True
+            spatial_score = admin_match
+
+        is_temporally_close = (time_delta_h <= cls.DEDUP_TIME_WINDOW_HOURS)
 
         # Composite score
-        # 0.40 * semantic + 0.25 * category + 0.20 * spatial + 0.15 * media
         composite_score = (
-            0.40 * semantic_sim
-            + 0.25 * category_match
-            + 0.20 * spatial_score
-            + 0.15 * (media_score if media_score > 0 else semantic_sim)
+            0.35 * semantic_sim
+            + 0.30 * category_match
+            + 0.25 * spatial_score
+            + 0.10 * (media_score if media_score > 0 else semantic_sim)
         )
 
         # Verdict logic
@@ -167,25 +245,26 @@ class DeduplicationEngine:
                 is_duplicate=True,
                 similarity_score=round(composite_score, 2),
                 matched_report_id=str(candidate.get("id")),
-                matched_event_id=str(candidate.get("canonical_event_id") or ""),
+                matched_event_id=str(candidate.get("canonical_event_id") or candidate.get("id") or ""),
                 level_matched="MEDIA_PHASH",
                 spatial_distance_km=round(distance_km, 2) if distance_km is not None else None,
                 time_delta_hours=round(time_delta_h, 2),
                 explanation="Matching media perceptual hash within active observation window",
             )
 
-        if is_spatially_close and is_temporally_close and category_match >= 0.80:
-            if composite_score >= 0.65 or (spatial_score >= 0.85 and time_delta_h <= 2.0):
+        if is_spatially_close and is_temporally_close and category_match >= 0.70:
+            # Require minimum content similarity so distinct stories in same area remain distinct (Section 15)
+            if composite_score >= 0.65 and semantic_sim >= 0.40:
                 return DuplicateEvaluation(
                     verdict="NEAR_DUPLICATE",
                     is_duplicate=True,
                     similarity_score=round(composite_score, 2),
                     matched_report_id=str(candidate.get("id")),
-                    matched_event_id=str(candidate.get("canonical_event_id") or ""),
+                    matched_event_id=str(candidate.get("canonical_event_id") or candidate.get("id") or ""),
                     level_matched="SPATIOTEMPORAL",
                     spatial_distance_km=round(distance_km, 2) if distance_km is not None else None,
                     time_delta_hours=round(time_delta_h, 2),
-                    explanation=f"Corroborating observation within {distance_km:.1f}km and {time_delta_h:.1f}h",
+                    explanation=f"Corroborating observation within {'%.1fkm' % distance_km if distance_km is not None else 'same district/state'} and {time_delta_h:.1f}h",
                 )
             elif composite_score >= 0.35:
                 return DuplicateEvaluation(
@@ -193,7 +272,7 @@ class DeduplicationEngine:
                     is_duplicate=False,
                     similarity_score=round(composite_score, 2),
                     matched_report_id=str(candidate.get("id")),
-                    matched_event_id=str(candidate.get("canonical_event_id") or ""),
+                    matched_event_id=str(candidate.get("canonical_event_id") or candidate.get("id") or ""),
                     level_matched="SPATIOTEMPORAL",
                     spatial_distance_km=round(distance_km, 2) if distance_km is not None else None,
                     time_delta_hours=round(time_delta_h, 2),

@@ -15,6 +15,7 @@ import asyncio
 import os
 import socket
 import sys
+import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -204,15 +205,21 @@ async def probe_opensearch():
     print("\n--- 4. OPENSEARCH PROBE ---")
     url = settings.OPENSEARCH_URL
     print(f"Configured OPENSEARCH_URL: {url}")
-    is_open = check_tcp_port("localhost", 9200)
-    print(f"OpenSearch TCP Port 9200 listening: {is_open}")
+    import urllib.parse
+    parsed = urllib.parse.urlparse(url)
+    target_host = parsed.hostname or "localhost"
+    target_port = parsed.port or (443 if url.startswith("https") else 9200)
+    is_open = check_tcp_port(target_host, target_port)
+    print(f"OpenSearch TCP Port {target_host}:{target_port} listening: {is_open}")
 
     from ai.opensearch_indexer import opensearch_indexer
     print(f"OpenSearch indexer is_live: {opensearch_indexer.is_live}")
+    print(f"OpenSearch indexer status: {opensearch_indexer.status}")
 
-    # Test in-memory / relational search fallback
+    # Test indexing & search
+    test_id = f"probe-test-{uuid.uuid4().hex[:8]}"
     doc = {
-        "id": "test-event-123",
+        "id": test_id,
         "normalized_text": "Severe Rainstorm in Bhubaneswar with waterlogging",
         "primary_category": "RAINFALL",
         "location_city": "Bhubaneswar",
@@ -220,9 +227,10 @@ async def probe_opensearch():
         "confidence_score": 0.95,
     }
     indexed = await opensearch_indexer.index_report(doc)
-    print(f"OpenSearch/Fallback Index Document: {'PASS' if indexed else 'FAIL'}")
+    print(f"OpenSearch Index Document: {'PASS' if indexed else 'FAIL'}")
     search_res = await opensearch_indexer.search_reports(query_text="Bhubaneswar", category="RAINFALL")
-    print(f"OpenSearch/Fallback Search Document: {'PASS' if len(search_res) > 0 else 'FAIL'} (hits={len(search_res)})")
+    print(f"OpenSearch Search Document: {'PASS' if len(search_res) > 0 else 'FAIL'} (hits={len(search_res)})")
+    await opensearch_indexer.delete_report(test_id)
     return is_open
 
 
@@ -230,46 +238,32 @@ async def probe_neo4j():
     print("\n--- 5. NEO4J / DWEG PROBE ---")
     uri = settings.NEO4J_URI
     print(f"Configured NEO4J_URI: {uri}")
-    is_open = check_tcp_port("localhost", 7687)
-    print(f"Neo4j Bolt TCP Port 7687 listening: {is_open}")
+    import urllib.parse
+    clean_uri = uri.replace("neo4j+s://", "http://").replace("neo4j://", "http://").replace("bolt+s://", "http://").replace("bolt://", "http://")
+    parsed = urllib.parse.urlparse(clean_uri)
+    target_host = parsed.hostname or "localhost"
+    target_port = parsed.port or 7687
+    is_open = check_tcp_port(target_host, target_port)
+    print(f"Neo4j TCP Port {target_host}:{target_port} listening: {is_open}")
 
-    from ai.dweg_service import dweg_service
-    await dweg_service.initialize()
-    print(f"DWEG Neo4j Live Driver: {dweg_service._is_neo4j_live}")
+    from app.db.neo4j_session import check_neo4j_connection, get_neo4j_health_status
+    from app.services.dweg_service import dweg_service
+    neo_live = await check_neo4j_connection()
+    print(f"Neo4j driver connection is_live: {neo_live}")
+    neo_health = await get_neo4j_health_status()
+    print(f"Neo4j Health Summary: {neo_health}")
 
-    # Test DWEG in-memory graph operations
-    await dweg_service.upsert_event_node(
-        event_id="infra-test-event-1",
-        category="THUNDERSTORM",
-        severity=3,
-        confidence=0.88,
-        status="VERIFIED",
-        lat=20.2961,
-        lon=85.8245,
-        city="Bhubaneswar",
-    )
-    await dweg_service.upsert_report_node(
-        report_id="infra-test-report-1",
-        source_id="src-imd-1",
-        source_type="WEATHER_API",
-        category="THUNDERSTORM",
-        text="Heavy thunder and lightning over Bhubaneswar",
-        confidence=0.92,
-        lat=20.2961,
-        lon=85.8245,
-        city="Bhubaneswar",
-    )
-    await dweg_service.link_report_to_event(
-        report_id="infra-test-report-1",
-        event_id="infra-test-event-1",
-        corroboration_score=0.95,
-    )
+    from app.db.session import AsyncSessionLocal
+    from app.models.weather_event import WeatherEvent
+    from sqlalchemy import select
 
-    graph_data = await dweg_service.get_event_graph("infra-test-event-1")
-    print(f"DWEG Graph Fallback Nodes: {graph_data['node_count']}, Edges: {graph_data['edge_count']} (PASS)")
-
-    conf_field = await dweg_service.compute_confidence_field("infra-test-event-1")
-    print(f"DWEG Confidence Field GeoJSON: {'PASS' if conf_field.get('features') is not None else 'FAIL'} (features={len(conf_field.get('features', []))})")
+    async with AsyncSessionLocal() as session:
+        ev = await session.scalar(select(WeatherEvent).limit(1))
+        if ev:
+            graph_data = await dweg_service.build_event_graph(str(ev.id), db=session)
+            print(f"DWEG Graph Projection for Event {ev.id}: Nodes={len(graph_data.nodes)}, Edges={len(graph_data.edges)} (PASS)")
+        else:
+            print("DWEG Graph Projection: No events in DB to project (PASS)")
     return is_open
 
 

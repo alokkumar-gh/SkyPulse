@@ -1,350 +1,238 @@
-# SkyPulse — National Weather Big Data Analytics Platform
+# SkyPulse
 
-> Real-time national weather intelligence combining heterogeneous weather signals, AI analysis, geospatial intelligence, and Big Data processing for India.
+### Scalable National Weather Big Data Analytics Platform for India
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](LICENSE)
+[![Frontend Tests](https://img.shields.io/badge/Frontend%20Tests-108%20Passing-emerald.svg)](docs/TESTING.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.2-blue.svg)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18-cyan.svg)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688.svg)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
 
-## Problem
-
-India faces frequent, severe weather events — floods, cyclones, heatwaves, dust storms — that impact millions of citizens. Traditional forecasting systems are slow to relay ground-truth conditions. Critical information exists scattered across social media, citizen reports, government sensors, and public APIs, but no unified platform correlates and verifies this intelligence in real time.
-
-## Solution
-
-SkyPulse is a **national weather intelligence platform** that ingests heterogeneous weather signals from multiple authorized sources, applies AI/ML for extraction, classification, deduplication, and verification, and delivers a real-time operational dashboard for analysts, administrators, government users, and the public.
-
-SkyPulse is **not** a weather forecasting app. It is a **weather evidence intelligence system**.
+SkyPulse is a **National Weather Big Data & Evidence Intelligence Platform** engineered to aggregate, normalize, verify, deduplicate, and analyze heterogeneous meteorological signals across India in real time.
 
 ---
 
-## Core Capabilities
+## Overview
 
-| Capability | Description |
-|---|---|
-| Multi-source ingestion | Weather APIs, public datasets, authorized feeds, citizen reports |
-| Real-time streaming | Kafka-backed stream processing with sub-5-second event delivery |
-| AI classification | NLP + image analysis for automatic weather event categorization |
-| Evidence-based verification | Multi-signal verification with explainable scores |
-| Duplicate detection | Semantic + spatial + temporal clustering into canonical events |
-| Geospatial intelligence | PostGIS-powered location extraction, mapping, and spatial queries |
-| Real-time dashboard | Live India map, event heatmap, state/district analytics |
-| Admin Panel | Connector health, moderation, audit, user management |
-| Demo mode | Fully seeded synthetic data pipeline for demonstration |
+India faces frequent, high-impact meteorological events — torrential monsoon downpours, severe cyclones, extreme heatwaves, dust squalls, and mountain cloudbursts. Ground truth information is fragmented across:
+- **Government Sensor Networks** (IMD AWS mesonet feeds, state automatic weather stations)
+- **Public Weather APIs** (Open-Meteo, satellite reanalysis)
+- **News Media Outlets** (Regional news RSS feeds, weather alert bulletins)
+- **Decentralized Social Web** (Mastodon weather community observations, `#mumbairains`, `#delhiweather`)
+- **Citizen Ground Truth** (Crowdsourced field reports with geo-tagged images)
+
+SkyPulse ingests these disparate feeds, extracts spatial and meteorological entities, performs spatial-temporal clustering and multi-signal verification against automated weather stations, and delivers an explainable, real-time national situational awareness platform.
 
 ---
 
-## Signature Innovation — Dynamic Weather Evidence Graph (DWEG)
+## Key Capabilities
 
-SkyPulse introduces the **Dynamic Weather Evidence Graph**, a live knowledge graph that models weather events as interconnected nodes linked by spatial propagation, temporal evolution, and cross-source evidence chains.
+- **Multi-Source Ingestion Engine**: Continuous ingestion from Open-Meteo, Data.gov.in IMD feeds, Google News RSS, Mastodon decentralized social web, and citizen crowdsourced reports.
+- **AI-Assisted Verification & Intelligence**: Groq Llama-3.3-70B pipeline with deterministic rule-based fallback for instant hazard categorization, impact narratives, and evidence reasoning.
+- **Dynamic Weather Evidence Graph (DWEG)**: Topological knowledge graph linking Weather Events, Evidence Reports, Sources, and Geographic Entities with explainable provenance chains.
+- **Spatial-Temporal Deduplication**: Automated clustering of multi-channel reports into canonical weather events using Haversine spatial proximity ($\le 45\text{ km}$) and temporal sliding windows ($\le 6\text{ hours}$).
+- **Interactive Geospatial Radar**: High-performance Google Maps interface displaying 240+ observation stations, 75+ nationwide hazard events, multi-horizon time filters (`1H`, `6H`, `24H`, `7D`, `ALL`), and full dossier inspection drawers.
+- **Live Real-Time Synchronization**: Sub-second WebSocket streaming (`/ws/events`) for instant event creation, state updates, and alert propagation.
+- **Comprehensive Analytics & Reporting**: Real-time severity distributions, category breakdowns, source reliability scoring, and PDF/printable meteorological reports.
 
-Unlike simple event lists, DWEG tracks **how a weather event evolves**, which sources corroborate it, and what propagation path it is following. It produces an **Event Confidence Field** — a spatial heatmap showing where a weather event is most likely occurring based on converging evidence — and an **Event Propagation Timeline** showing movement and intensification.
+---
 
-**What makes DWEG distinctive in SkyPulse's implementation:**
-- Combines citizen observations + official sensors + historical patterns in a single graph
-- Uses spatial relationship edges (adjacency, upstream/downstream) not just point proximity
-- Tracks evidence chain provenance for full auditability
-- Generates automated propagation alerts when a localized event shows expansion signals
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Sources [Heterogeneous Ingestion Layer]
+        S1[Open-Meteo AWS Array]
+        S2[Data.gov.in / IMD Feeds]
+        S3[Google News Weather RSS]
+        S4[Mastodon Social Web]
+        S5[Citizen Ground Reports]
+    end
+
+    subgraph Pipeline [Normalization & Intelligence Pipeline]
+        N1[Base Connector & Redaction Engine]
+        N2[Geospatial Extraction & Centroid Resolver]
+        N3[Spatial-Temporal Deduplicator]
+        N4[Groq Llama-3.3-70B / Rule Classifier]
+        N5[Multi-Signal Verification & DWEG Engine]
+    end
+
+    subgraph Storage [Persistence & Broadcast]
+        DB[(PostgreSQL / SQLite Storage)]
+        OS[(OpenSearch Search Index)]
+        N4J[(Neo4j Knowledge Graph)]
+        WS[WebSocket Live Gateway]
+    end
+
+    subgraph Presentation [User Experience & Analytics]
+        MAP[Geospatial Radar & Live Map]
+        DASH[National Command Dashboard]
+        DWEG[DWEG Topology Explorer]
+        REP[Meteorological Intelligence Reports]
+    end
+
+    S1 & S2 & S3 & S4 & S5 --> N1
+    N1 --> N2 --> N3 --> N4 --> N5
+    N5 --> DB & OS & N4J & WS
+    DB & WS --> MAP & DASH & DWEG & REP
+```
 
 ---
 
 ## Technology Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18, TypeScript, MapLibre GL JS, Recharts, Zustand, Socket.io-client |
-| Backend API | FastAPI (Python 3.11), Pydantic v2 |
-| Stream broker | Apache Kafka (Redpanda for prototype) |
-| Database | PostgreSQL 16 + PostGIS 3.4 |
-| Cache | Redis 7 |
-| Search | OpenSearch 2.x |
-| Object storage | MinIO (S3-compatible) |
-| Graph store | Neo4j 5 (DWEG layer) |
-| AI/ML | Python, Hugging Face Transformers, sentence-transformers, OpenCV, spaCy |
-| LLM integration | OpenAI API / Ollama (local fallback) |
-| Containerization | Docker, Docker Compose |
-| Monitoring | Prometheus, Grafana |
-| Reverse proxy | Nginx |
+### Frontend
+- **Framework**: React 18 (TypeScript)
+- **Build Tool**: Vite
+- **Mapping & GIS**: `@vis.gl/react-google-maps` (Google Maps JavaScript API)
+- **Charts & Visualizations**: Recharts
+- **State Management**: Zustand
+- **Icons & Styling**: Lucide React, Vanilla CSS Design System with dark glassmorphism
+
+### Backend
+- **Framework**: FastAPI (Python 3.11)
+- **Data Validation**: Pydantic v2
+- **ORM & Migrations**: SQLAlchemy 2.0, Alembic
+- **Asynchronous Engine**: asyncio, aiohttp, httpx, uvicorn
+
+### Data & AI Services
+- **Database**: PostgreSQL 16 + PostGIS / SQLite (local development)
+- **Graph Database**: Neo4j 5 Community Edition (DWEG)
+- **Search & Indexing**: OpenSearch 2.11
+- **Caching & Pub/Sub**: Redis 7
+- **AI/LLM Provider**: Groq API (Llama-3.3-70B-Versatile) with zero-latency deterministic rule fallback
 
 ---
 
-## Architecture Overview
+## Quickstart & Local Development
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        DATA SOURCES                          │
-│  Weather APIs | Public Datasets | Citizen Reports | Feeds    │
-└───────────────────────────┬──────────────────────────────────┘
-                            ↓
-┌──────────────────────────────────────────────────────────────┐
-│                 CONNECTOR LAYER (Python workers)             │
-└───────────────────────────┬──────────────────────────────────┘
-                            ↓
-                    ┌───────────────┐
-                    │     Kafka     │  (Redpanda)
-                    └───────┬───────┘
-                            ↓
-┌──────────────────────────────────────────────────────────────┐
-│              AI PROCESSING PIPELINE                          │
-│  NLP Extraction → Classification → Geolocation              │
-│  Duplicate Detection → Verification → DWEG Update           │
-└───────────────────────────┬──────────────────────────────────┘
-                            ↓
-┌──────────────────────────────────────────────────────────────┐
-│                       STORAGE                                │
-│  PostgreSQL+PostGIS | Redis | MinIO | OpenSearch | Neo4j     │
-└───────────────────────────┬──────────────────────────────────┘
-                            ↓
-                    ┌───────────────┐
-                    │  FastAPI +    │
-                    │  WebSocket    │
-                    └───────┬───────┘
-                            ↓
-                    ┌───────────────┐
-                    │  React        │
-                    │  Dashboard    │
-                    └───────────────┘
-```
+### 1. Prerequisites
+- **Node.js**: `v18.0.0+`
+- **Python**: `3.11.x`
+- **npm** or **yarn**
 
----
-
-## Repository Structure
-
-```
-skypulse/
-├── README.md
-├── docker-compose.yml
-├── docker-compose.demo.yml
-├── .env.example
-├── docs/
-│   ├── PRD.md
-│   ├── SYSTEM_ARCHITECTURE.md
-│   ├── AI_ML.md
-│   ├── DATABASE_SCHEMA.md
-│   ├── API_SPECIFICATION.md
-│   ├── UI_UX.md
-│   └── IMPLEMENTATION_PLAN.md
-├── backend/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── api/
-│   │   ├── core/
-│   │   ├── models/
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   └── db/
-│   ├── connectors/
-│   ├── ai/
-│   ├── workers/
-│   ├── tests/
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── store/
-│   │   ├── hooks/
-│   │   └── utils/
-│   ├── public/
-│   └── package.json
-├── infra/
-│   ├── nginx/
-│   ├── prometheus/
-│   └── grafana/
-├── scripts/
-│   ├── seed_demo.py
-│   ├── migrate.py
-│   └── generate_stream.py
-└── tests/
-    ├── integration/
-    └── e2e/
-```
-
----
-
-## Local Setup
-
-### Prerequisites
-
-- Docker 24+ and Docker Compose v2
-- Node.js 20+ and npm 10+
-- Python 3.11+
-- Git
-
-### Quick Start (Demo Mode)
-
+### 2. Backend Setup
 ```bash
-# 1. Clone the repository
-git clone https://github.com/your-org/skypulse.git
-cd skypulse
-
-# 2. Copy environment variables
-cp .env.example .env
-
-# 3. Start all services in demo mode
-docker compose -f docker-compose.demo.yml up -d
-
-# 4. Seed demo data
-docker compose exec backend python scripts/seed_demo.py
-
-# 5. Access the platform
-# Dashboard:   http://localhost:3000
-# API docs:    http://localhost:8000/docs
-# Grafana:     http://localhost:3001
-# MinIO:       http://localhost:9001
-```
-
-### Full Development Setup
-
-```bash
-# Start infrastructure services only
-docker compose up -d postgres redis kafka minio opensearch neo4j
-
-# Backend
 cd backend
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+python -m venv .venv
 
-# Frontend
+# Activate virtual environment
+# Windows:
+.venv\Scripts\Activate.ps1
+# Linux/macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+cp .env.example .env
+alembic upgrade head
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+API Documentation: `http://localhost:8000/docs`
+
+### 3. Frontend Setup
+```bash
 cd frontend
 npm install
-npm run dev  # Starts on http://localhost:3000
-
-# Start AI workers
-python -m workers.ai_pipeline
+cp .env.example .env.local
+npm run dev
 ```
+Frontend Web Application: `http://localhost:3000/`
 
 ---
 
-## Environment Variables
+## Testing & Quality Assurance
 
-```env
-# Database
-DATABASE_URL=postgresql+asyncpg://skypulse:password@localhost:5432/skypulse
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# Kafka / Redpanda
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-KAFKA_TOPIC_RAW=skypulse.raw
-KAFKA_TOPIC_PROCESSED=skypulse.processed
-KAFKA_TOPIC_EVENTS=skypulse.events
-
-# MinIO / S3
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET_MEDIA=skypulse-media
-
-# OpenSearch
-OPENSEARCH_URL=http://localhost:9200
-
-# Neo4j (DWEG)
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-
-# AI / LLM
-OPENAI_API_KEY=sk-...           # Optional; system falls back to Ollama
-OLLAMA_BASE_URL=http://localhost:11434
-LLM_PROVIDER=ollama             # openai | ollama | disabled
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-
-# Auth
-JWT_SECRET_KEY=change-me-in-production
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
-
-# Weather APIs (all optional; demo mode works without them)
-OPENWEATHERMAP_API_KEY=
-IMD_API_KEY=
-WEATHERAPI_KEY=
-
-# App
-APP_ENV=development             # development | production | demo
-DEMO_MODE=true
-LOG_LEVEL=INFO
-```
-
----
-
-## Running the Project
-
-| Command | Description |
-|---|---|
-| `docker compose -f docker-compose.demo.yml up` | Full demo stack |
-| `docker compose up -d` | Infrastructure only |
-| `uvicorn app.main:app --reload` | Backend dev server |
-| `npm run dev` | Frontend dev server |
-| `python scripts/seed_demo.py` | Seed demo data |
-| `python scripts/generate_stream.py` | Stream synthetic events |
-| `alembic upgrade head` | Run DB migrations |
-| `pytest` | Run backend tests |
-| `npm run test` | Run frontend tests |
-
----
-
-## Demo Mode
-
-When `DEMO_MODE=true` or using `docker-compose.demo.yml`:
-
-- A synthetic event generator produces weather reports every 5–30 seconds across India
-- Reports span all supported event types with realistic geo-coordinates
-- Demo sources are tagged `source_type=DEMO` and visually marked in the UI
-- The full ingestion → AI → verification → dashboard pipeline operates normally
-- All AI, deduplication, and DWEG features work on synthetic data
-- No external API keys are required
-
----
-
-## Testing
+SkyPulse maintains a comprehensive test suite across frontend and backend modules:
 
 ```bash
-# Backend unit tests
-cd backend && pytest tests/unit/ -v
+# Run Frontend Tests (108 tests passing)
+cd frontend
+npm test
 
-# Backend integration tests (requires running infrastructure)
-pytest tests/integration/ -v
+# Run Frontend Production Build Check
+npm run build
 
-# Frontend tests
-cd frontend && npm run test
+# Run Backend Unit Tests
+cd backend
+pytest tests/
+```
 
-# E2E tests (requires full stack)
-cd tests/e2e && npm run test:e2e
+See [`docs/TESTING.md`](docs/TESTING.md) for test execution details and coverage reports.
+
+---
+
+## Project Structure
+
+```text
+SkyPulse/
+├── README.md                          # Project overview and documentation index
+├── LICENSE                            # MIT License
+├── CONTRIBUTING.md                   # Contribution guidelines and coding standards
+├── CODE_OF_CONDUCT.md                 # Contributor covenant code of conduct
+├── SECURITY.md                        # Security policy and vulnerability disclosure
+├── .gitignore                         # Comprehensive Git ignore definitions
+├── .env.example                       # Root environment variables template
+├── docker-compose.yml                 # Local multi-service infrastructure compose
+├── docker-compose.prod.yml            # Production deployment compose manifest
+│
+├── docs/                              # Comprehensive documentation suite
+│   ├── PRD.md                         # Product requirements document
+│   ├── SYSTEM_ARCHITECTURE.md         # System architecture specification
+│   ├── DATABASE_SCHEMA.md             # Database schema and ER diagrams
+│   ├── API_SPECIFICATION.md           # REST & WebSocket API specification
+│   ├── AI_ML.md                       # AI/ML intelligence & verification architecture
+│   ├── DATA_PIPELINE.md               # Ingestion, normalization, and deduplication
+│   ├── DATA_SOURCES.md                # Ingestion connector catalog
+│   ├── UI_UX.md                       # Design system and layout specification
+│   ├── DEPLOYMENT.md                  # Cloud Run & Docker deployment guide
+│   ├── DEVELOPMENT.md                 # Local setup and developer guide
+│   ├── TESTING.md                     # Test strategy and test suites
+│   ├── TROUBLESHOOTING.md             # Common issues and resolutions
+│   └── IMPLEMENTATION_PLAN.md         # Architecture milestones and roadmap
+│
+├── frontend/                          # React + TypeScript + Vite web application
+│   ├── src/
+│   │   ├── components/                # Map, Events, DWEG, Layout, and UI components
+│   │   ├── pages/                     # Dashboard, LiveMap, Events, Reports, Analytics, etc.
+│   │   ├── store/                     # Zustand state stores (eventsStore, filtersStore)
+│   │   ├── utils/                     # API client, WebSocket client, demo data layer
+│   │   └── __tests__/                 # Vitest component and integration tests
+│   ├── package.json
+│   └── vite.config.ts
+│
+├── backend/                           # FastAPI Python backend application
+│   ├── app/                           # Core API routes, schemas, models, and services
+│   ├── ai/                            # Groq provider, fallback provider, confidence engine
+│   ├── connectors/                    # Ingestion connectors (Open-Meteo, GNews, Mastodon)
+│   ├── alembic/                       # Database schema migrations
+│   └── requirements.txt
+│
+└── scripts/                           # Database seeding and utility scripts
 ```
 
 ---
 
-## Deployment Overview
+## Documentation Index
 
-SkyPulse is containerized. For production:
-
-1. Set `APP_ENV=production` and `DEMO_MODE=false`
-2. Replace MinIO with AWS S3 or GCS
-3. Replace Redpanda with managed Kafka (Confluent Cloud / MSK)
-4. Replace self-hosted PostgreSQL with a managed instance (RDS / Cloud SQL)
-5. Use a managed Neo4j instance (Aura) for DWEG
-6. Configure Nginx for TLS termination
-7. Set up Prometheus + Grafana alerting
-
-See `docs/IMPLEMENTATION_PLAN.md` Phase 12 for full deployment steps.
-
----
-
-## Documentation
-
-| File | Purpose |
+| Document | Description |
 |---|---|
-| [docs/PRD.md](docs/PRD.md) | Product requirements |
-| [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Technical architecture |
-| [docs/AI_ML.md](docs/AI_ML.md) | AI/ML pipeline design |
-| [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) | Complete database schema |
-| [docs/API_SPECIFICATION.md](docs/API_SPECIFICATION.md) | REST API contracts |
-| [docs/UI_UX.md](docs/UI_UX.md) | Frontend design specification |
-| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Phased implementation plan |
+| [**Product Requirements (PRD)**](docs/PRD.md) | Problem statement, functional requirements, and personas |
+| [**System Architecture**](docs/SYSTEM_ARCHITECTURE.md) | High-level component interactions, data flow, and layers |
+| [**Database Schema**](docs/DATABASE_SCHEMA.md) | Data models, relationships, indexes, and ER diagram |
+| [**API Specification**](docs/API_SPECIFICATION.md) | Complete REST API routes and WebSocket protocols |
+| [**AI & ML System**](docs/AI_ML.md) | Groq Llama-3.3-70B, confidence scoring, and fallbacks |
+| [**Data Ingestion Pipeline**](docs/DATA_PIPELINE.md) | Signal collection, normalization, and spatial resolution |
+| [**Data Sources Catalog**](docs/DATA_SOURCES.md) | Inventory of implemented telemetry feeds and connectors |
+| [**UI / UX Design System**](docs/UI_UX.md) | Visual design tokens, 70/30 layout, and components |
+| [**Deployment Guide**](docs/DEPLOYMENT.md) | Docker, Google Cloud Run, and Cloudflare Pages setup |
+| [**Developer Guide**](docs/DEVELOPMENT.md) | Local environment configuration and setup instructions |
+| [**Testing Suite**](docs/TESTING.md) | Vitest, pytest, integration tests, and test matrix |
+| [**Troubleshooting & FAQ**](docs/TROUBLESHOOTING.md) | Solutions to common setup, key, and network errors |
+| [**Implementation Plan**](docs/IMPLEMENTATION_PLAN.md) | Roadmap milestones and component deliverables |
 
 ---
 
-*SkyPulse — Turning weather signals into national intelligence.*
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.

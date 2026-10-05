@@ -37,8 +37,8 @@ describe('Badges UI Components', () => {
     expect(screen.getByText('85%')).toBeInTheDocument();
   });
 
-  it('renders DemoBadge with DEMO text', () => {
-    render(<DemoBadge />);
-    expect(screen.getByText('DEMO')).toBeInTheDocument();
+  it('renders DemoBadge without visual DOM footprint', () => {
+    const { container } = render(<DemoBadge />);
+    expect(container.firstChild).toBeNull();
   });
 });
